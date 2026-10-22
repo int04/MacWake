@@ -10,7 +10,7 @@ import SwiftUI
 #if APPSTORE
 let kAppGroupID = "group.jarvisit.macwake"
 #else
-let kAppGroupID = "6NK6D7LL79.com.jarvisit.macwake"
+let kAppGroupID = "ZB8Y3RH44B.com.nghiaduc.macwakelocal"
 #endif
 
 struct BatterySnapshot: Codable {
@@ -147,7 +147,7 @@ struct BatteryWidgetView: View {
 
 struct BatteryWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "com.jarvisit.macwake.battery", provider: BatteryProvider()) { entry in
+        StaticConfiguration(kind: "com.nghiaduc.macwakelocal.battery", provider: BatteryProvider()) { entry in
             BatteryWidgetView(entry: entry)
         }
         .configurationDisplayName(LocalizedStringResource("MacWake Battery"))

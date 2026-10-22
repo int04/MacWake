@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-APP_NAME="MacWake"
+APP_NAME="MacWakeLocal"
 APP_DIR="${APP_NAME}.app"
 CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
@@ -9,7 +9,7 @@ RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 
 echo "=== Cleaning previous builds ==="
 rm -rf "${APP_DIR}"
-rm -rf "/Applications/${APP_NAME}.app"
+# Preserve installed official application.
 rm -rf .build
 
 echo "=== Creating App Bundle Directory Structure ==="
@@ -44,7 +44,7 @@ cat <<EOF > "${CONTENTS_DIR}/Info.plist"
     <key>CFBundleExecutable</key>
     <string>MacWake</string>
     <key>CFBundleIdentifier</key>
-    <string>com.jarvisit.macwake</string>
+    <string>com.nghiaduc.macwakelocal</string>
     <key>CFBundleName</key>
     <string>Wake</string>
     <key>CFBundleDisplayName</key>
@@ -78,7 +78,7 @@ cat <<EOF > "${CONTENTS_DIR}/Info.plist"
     <key>SUPublicEDKey</key>
     <string>wZGVOUc0aWD29DwSzAjmOKmGm2deTNLayS08g2URkeY=</string>
     <key>SUFeedURL</key>
-    <string>https://raw.githubusercontent.com/Jarvis322/MacWake/main/appcast.xml</string>
+    <string></string>
 </dict>
 </plist>
 EOF
@@ -178,23 +178,23 @@ echo "=== Embedding privileged helper daemon ==="
 cp ${RELEASE_DIR}/MacWakeHelper "${MACOS_DIR}/MacWakeHelper"
 LAUNCHD_DIR="${CONTENTS_DIR}/Library/LaunchDaemons"
 mkdir -p "${LAUNCHD_DIR}"
-cat <<EOF > "${LAUNCHD_DIR}/com.jarvisit.macwake.helper.plist"
+cat <<EOF > "${LAUNCHD_DIR}/com.nghiaduc.macwakelocal.helper.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.jarvisit.macwake.helper</string>
+    <string>com.nghiaduc.macwakelocal.helper</string>
     <key>BundleProgram</key>
     <string>Contents/MacOS/MacWakeHelper</string>
     <key>MachServices</key>
     <dict>
-        <key>com.jarvisit.macwake.helper</key>
+        <key>com.nghiaduc.macwakelocal.helper</key>
         <true/>
     </dict>
     <key>AssociatedBundleIdentifiers</key>
     <array>
-        <string>com.jarvisit.macwake</string>
+        <string>com.nghiaduc.macwakelocal</string>
     </array>
 </dict>
 </plist>
@@ -220,7 +220,7 @@ cat <<EOF > "${WIDGET_DIR}/Contents/Info.plist"
     <key>CFBundleExecutable</key>
     <string>MacWakeWidget</string>
     <key>CFBundleIdentifier</key>
-    <string>com.jarvisit.macwake.widget</string>
+    <string>com.nghiaduc.macwakelocal.widget</string>
     <key>CFBundleName</key>
     <string>MacWake Widget</string>
     <key>CFBundleDisplayName</key>
@@ -252,7 +252,7 @@ cp -R "${SPARKLE_SRC}" "${FRAMEWORKS_DIR}/Sparkle.framework"
 # an unusual double space ("Yigit Can  Polat") straight from Apple's own account records,
 # and codesign's name matching is exact-string, not fuzzy. The hash is exact and immune to
 # a name changing again — `security find-identity -v -p codesigning` lists it.
-SIGN_IDENTITY="B9DB2D80CC21E70EEABE88F65F81803551D45BA3"
+SIGN_IDENTITY="Developer ID Application: Nghia Duc (ZB8Y3RH44B)"
 ENTITLEMENTS="$(pwd)/MacWake.entitlements"
 SPARKLE_FW="${FRAMEWORKS_DIR}/Sparkle.framework"
 
@@ -314,7 +314,7 @@ if ! spctl --assess "${APP_DIR}" >/dev/null 2>&1; then
 fi
 
 echo "=== Copying to /Applications ==="
-cp -R "${APP_DIR}" /Applications/
+echo "Local build only; installation follows notarization."
 
 echo "=== Successfully built MacWake ==="
 echo ""

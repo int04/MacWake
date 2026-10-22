@@ -1353,6 +1353,7 @@ class BatteryTracker: ObservableObject {
                 // Both release their state with a blocking semaphore before returning here —
                 // see cancelCalibrationBeforeSleep/cancelFanControlBeforeSleep.
                 ChargeLimitManager.shared.cancelCalibrationBeforeSleep()
+                ChargeLimitManager.shared.cancelManualPauseBeforeSleep()
                 ChargeLimitManager.shared.cancelFanControlBeforeSleep()
             }
         }

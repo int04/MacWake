@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import IOKit
+import IOKit.pwr_mgt
 import ServiceManagement
 import MacWakeShared
 
@@ -114,6 +115,7 @@ final class ChargeLimitManager: ObservableObject {
         didSet {
             UserDefaults.standard.set(isEnabled, forKey: "chargeLimitEnabled")
             if !isEnabled {
+                manualChargePaused = false
                 // A calibration in progress would otherwise be stranded: evaluate() bails
                 // at its `isEnabled` guard, so calibrationActive never clears and even the
                 // timeout backstop stops firing. Cancelling also restores charging.
@@ -144,6 +146,76 @@ final class ChargeLimitManager: ObservableObject {
     /// automatically when the battery reaches 100% or on cancel; deliberately NOT
     /// persisted so a forgotten override can't outlive a relaunch.
     @Published var topUpActive = false
+
+    /// A one-shot charge hold. The normal limit takes over again at the lower
+    /// recharge threshold. Not persisted: quitting restores charging safely.
+    @Published private(set) var manualChargePaused = false
+
+    @Published var keepHDMIAwakeOnBattery = false {
+        didSet {
+            if !keepHDMIAwakeOnBattery { releaseExternalDisplayAwakeAssertion() }
+            else { refreshExternalDisplayAwakeAssertion() }
+        }
+    }
+    private var externalDisplayAwakeAssertion: IOPMAssertionID = 0
+
+    private func refreshExternalDisplayAwakeAssertion() {
+        let shouldRun = keepHDMIAwakeOnBattery && manualChargePaused
+            && LidAndDisplay.externalDisplayAttached()
+        if shouldRun && externalDisplayAwakeAssertion == 0 {
+            var identifier: IOPMAssertionID = 0
+            let result = IOPMAssertionCreateWithName(
+                kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
+                IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                "MacWakeLocal: external display on battery" as CFString,
+                &identifier)
+            if result == kIOReturnSuccess { externalDisplayAwakeAssertion = identifier }
+        } else if !shouldRun { releaseExternalDisplayAwakeAssertion() }
+    }
+
+    private func releaseExternalDisplayAwakeAssertion() {
+        if externalDisplayAwakeAssertion != 0 {
+            IOPMAssertionRelease(externalDisplayAwakeAssertion)
+            externalDisplayAwakeAssertion = 0
+        }
+    }
+
+
+    func stopChargingNow(batteryLevel: Int) {
+        guard helperStatus == .ready, isEnabled, !calibrationActive,
+              !dischargeActive, !topUpActive, !scheduledChargeActive else { return }
+        let lower = sailingEnabled ? sailingLower : limit - hysteresis
+        guard batteryLevel > lower else { return }
+        // Never cut adapter input in clamshell with an external display.
+        // Unknown hardware capability is treated conservatively.
+        guard !manualPauseClamshellUnsafe || keepHDMIAwakeOnBattery else { return }
+        manualChargePaused = true
+        refreshExternalDisplayAwakeAssertion()
+        Task {
+            if firmwareLimitActive { await releaseFirmwareLimit() }
+            await applyChargingAllowed(false)
+        }
+    }
+
+    private var manualPauseClamshellUnsafe: Bool {
+        holdCutsAdapter != false && !keepHDMIAwakeOnBattery && LidAndDisplay.lidIsClosed()
+            && LidAndDisplay.externalDisplayAttached()
+    }
+
+    /// Restore adapter power synchronously before suspension, when the app-side
+    /// control loop cannot guarantee a timely recovery.
+    func cancelManualPauseBeforeSleep() {
+        guard manualChargePaused else { return }
+        manualChargePaused = false
+        releaseExternalDisplayAwakeAssertion()
+        restoreChargingSynchronously()
+    }
+
+    func cancelManualChargePause() {
+        manualChargePaused = false
+        releaseExternalDisplayAwakeAssertion()
+        Task { await restoreCharging() }
+    }
 
     // MARK: - Manual discharge
 
@@ -409,7 +481,7 @@ final class ChargeLimitManager: ObservableObject {
     /// is cutting the adapter, whatever the Mac's own charge-stop key would otherwise do.
     var holdCutsAdapterNow: Bool? { firmwareLimitActive ? false : holdCutsAdapter }
 
-    private let plistName = "com.jarvisit.macwake.helper.plist"
+    private let plistName = "com.nghiaduc.macwakelocal.helper.plist"
     private var connection: NSXPCConnection?
     private var lastAdapterEnabled: Bool?
     private var lastToggleAt: Date?
@@ -799,6 +871,28 @@ final class ChargeLimitManager: ObservableObject {
         guard physicallyPlugged else {
             // Genuinely on battery — re-enable so the next real plug-in charges.
             if lastAdapterEnabled == false { Task { await restoreCharging() } }
+            return
+        }
+
+        // Manual hold overrides firmware control until the recharge floor is reached.
+        // Never keep the battery blocked below that floor: release BOTH SMC blocks.
+        if manualChargePaused {
+            let lower = sailingEnabled ? sailingLower : limit - hysteresis
+            refreshExternalDisplayAwakeAssertion()
+            if manualPauseClamshellUnsafe || batteryLevel <= lower {
+                manualChargePaused = false
+                releaseExternalDisplayAwakeAssertion()
+                Task { await restoreCharging() }
+            } else {
+                if firmwareLimitActive {
+                    Task {
+                        await releaseFirmwareLimit()
+                        await applyChargingAllowed(false)
+                    }
+                } else if lastAdapterEnabled != false {
+                    Task { await applyChargingAllowed(false) }
+                }
+            }
             return
         }
 

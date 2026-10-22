@@ -1,18 +1,18 @@
 import Foundation
 
 /// Mach service name shared between the app and the privileged helper daemon.
-public let kMacWakeHelperMachServiceName = "com.jarvisit.macwake.helper"
+public let kMacWakeHelperMachServiceName = "com.nghiaduc.macwakelocal.helper"
 
 /// Code-signing requirement both sides use to validate each other. Restricts XPC to the
-/// three legitimate MacWake binaries — the app ("com.jarvisit.macwake"), the embedded CLI
+/// three legitimate MacWake binaries — the app ("com.nghiaduc.macwakelocal"), the embedded CLI
 /// ("macwake", its default --identifier since it isn't bundled), and the helper itself
 /// ("MacWakeHelper") — all signed by this Developer ID team. A team-ID-only check would
 /// let ANY binary this account ever signs talk to the privileged helper; pinning the
 /// identifier too means an attacker needs a binary that impersonates one of these three
 /// exact identities, not just any signature from the same team.
 public let kMacWakeCodeSigningRequirement =
-    "anchor apple generic and certificate leaf[subject.OU] = \"6NK6D7LL79\" and " +
-    "(identifier \"com.jarvisit.macwake\" or identifier \"macwake\" or identifier \"MacWakeHelper\")"
+    "anchor apple generic and certificate leaf[subject.OU] = \"ZB8Y3RH44B\" and " +
+    "(identifier \"com.nghiaduc.macwakelocal\" or identifier \"macwake\" or identifier \"MacWakeHelper\")"
 
 /// XPC interface exposed by the root helper to the main app.
 @objc public protocol MacWakeHelperProtocol {

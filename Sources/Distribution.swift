@@ -13,6 +13,6 @@ enum Distribution {
     static let isAppStore = false
     /// Team-prefixed legacy style: auto-authorized for same-team Developer ID apps with
     /// no portal registration and no Sequoia consent prompt.
-    static let appGroupID = "6NK6D7LL79.com.jarvisit.macwake"
+    static let appGroupID = "ZB8Y3RH44B.com.nghiaduc.macwakelocal"
     #endif
 }

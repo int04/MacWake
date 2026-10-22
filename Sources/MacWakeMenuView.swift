@@ -1382,6 +1382,44 @@ struct MacWakeMenuView: View {
 
                 if chargeLimit.isEnabled {
                     rowDivider()
+                    HStack(spacing: 10) {
+                        iconTile("bolt.slash.fill", chargeLimit.manualChargePaused ? .orange : .secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(chargeLimit.manualChargePaused ? "Charging Paused" : "Stop Charging Now")
+                                .font(.subheadline)
+                            Text(chargeLimit.manualChargePaused
+                                 ? "Resumes automatically at \(chargeLimit.sailingEnabled ? chargeLimit.sailingLower : chargeLimit.limit - 5)%."
+                                 : "Pause charging now; the charge limit will resume it automatically.")
+                                .font(.system(size: 10)).foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button(chargeLimit.manualChargePaused ? "Resume" : "Stop") {
+                            if chargeLimit.manualChargePaused {
+                                chargeLimit.cancelManualChargePause()
+                            } else {
+                                chargeLimit.stopChargingNow(batteryLevel: tracker.currentBatteryLevel)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
+                        .disabled(!chargeLimit.manualChargePaused &&
+                                  tracker.currentBatteryLevel <= (chargeLimit.sailingEnabled ? chargeLimit.sailingLower : chargeLimit.limit - 5))
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    rowDivider()
+                    HStack(spacing: 10) {
+                        iconTile("display", .blue)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Keep HDMI Awake on Battery (Experimental)")
+                                .font(.system(size: 11))
+                            Text("Attempts to prevent idle sleep; macOS may still sleep on lid close.")
+                                .font(.system(size: 10)).foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $chargeLimit.keepHDMIAwakeOnBattery)
+                            .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    rowDivider()
                     sliderBlock {
                         HStack {
                             Text("Stop at").font(.caption).foregroundColor(.secondary)
