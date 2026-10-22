@@ -486,16 +486,40 @@ enum HelperSMC {
         return text.isEmpty ? "(no F* keys found)\n" : text
     }
 
-    /// (fanCount, minRPM, maxRPM). Returns (0,0,0) on fanless Macs.
+    /// Intersect the SMC limits of every fan. One shared manual target must be
+    /// valid for ALL fans; never substitute a guessed maximum.
     static func getFanInfo() -> (count: Int, min: Int, max: Int) {
         guard let conn = open() else { return (0, 0, 0) }
         defer { IOServiceClose(conn) }
         let count = Int(read(conn, "FNum"))
-        guard count > 0 else { return (0, 0, 0) }
-        // Report the saved hardware min if we've overridden F0Mn, else read it live.
-        let minRPM = hardwareMin[0] ?? readFanRPM(conn, "F0Mn")
-        let maxRPM = readFanRPM(conn, "F0Mx")
-        return (count, minRPM, maxRPM)
+        guard (1...8).contains(count) else { return (0, 0, 0) }
+        var minimum = 0
+        var maximum = Int.max
+        for i in 0..<count {
+            let low = hardwareMin[i] ?? readFanRPM(conn, "F\(i)Mn")
+            let high = readFanRPM(conn, "F\(i)Mx")
+            guard low >= 0, high > low + 200, high <= 15000 else {
+                return (count, 0, 0)
+            }
+            minimum = max(minimum, low)
+            maximum = min(maximum, high)
+        }
+        guard maximum > minimum + 200 else { return (count, 0, 0) }
+        return (count, minimum, maximum)
+    }
+
+    /// Informational per-fan limits. A missing/invalid maximum is reported as 0.
+    static func getFanRanges() -> String {
+        guard let conn = open() else { return "" }
+        defer { IOServiceClose(conn) }
+        let count = Int(read(conn, "FNum"))
+        guard (1...8).contains(count) else { return "" }
+        return (0..<count).map { i in
+            let low = hardwareMin[i] ?? readFanRPM(conn, "F\(i)Mn")
+            let high = readFanRPM(conn, "F\(i)Mx")
+            let valid = low >= 0 && high > low + 200 && high <= 15000
+            return "\(i):\(valid ? low : 0):\(valid ? high : 0)"
+        }.joined(separator: "\n")
     }
 
     // MARK: - Manual fan control
@@ -660,8 +684,9 @@ enum HelperSMC {
         if hardwareMin[i] == nil { hardwareMin[i] = readFanRPM(conn, "F\(i)Mn") }
         let hwMin = hardwareMin[i] ?? 0
         let maxReported = readFanRPM(conn, "F\(i)Mx")
-        let maxRPM = maxReported > hwMin ? maxReported : max(hwMin, 8000)
-        let clamped = min(max(rpm, hwMin), maxRPM)
+        // Refuse a manual target if this fan has no trustworthy hardware ceiling.
+        guard hwMin >= 0, maxReported > hwMin + 200, maxReported <= 15000 else { return false }
+        let clamped = min(max(rpm, hwMin), maxReported)
 
         var took = false
         if let modeKey = fanModeKey(conn, i) {

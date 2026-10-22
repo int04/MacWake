@@ -176,3 +176,5 @@
 "FINISH_PURPLE" = "Purple";
 
 "MANUAL_RESUME_AT_FMT" = "Resumes automatically at %d%%.";
+
+"FAN_RANGE_UNAVAILABLE" = "SMC fan limits are unavailable or invalid. Manual fan control is disabled.";

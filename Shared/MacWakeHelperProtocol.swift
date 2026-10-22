@@ -33,8 +33,13 @@ public let kMacWakeCodeSigningRequirement =
     /// `discharging == true` cuts the adapter. `reply` returns true on a successful write.
     func setForceDischarge(_ discharging: Bool, reply: @escaping (Bool) -> Void)
 
-    /// Returns (fanCount, minRPM, maxRPM) for fan 0, or (0,0,0) on fanless Macs.
+    /// Returns the safe common RPM interval across all installed fans.
+    /// An invalid/unavailable range is (count,0,0).
+    /// Per-fan ranges are available separately for presentation.
     func getFanInfo(reply: @escaping (Int, Int, Int) -> Void)
+
+    /// Read-only per-fan SMC range report (one index:min:max entry per line).
+    func getFanRanges(reply: @escaping (String) -> Void)
 
     /// Force the fans to a manual target RPM, or return them to automatic system control.
     /// `manual == false` restores auto and also cancels a takeover still in progress.
@@ -99,4 +104,4 @@ public let kMacWakeCodeSigningRequirement =
 /// without bumping means users keep executing the previous code. That silently
 /// swallowed two Apple Silicon fan fixes (1.43, 1.45) before it was caught; build.sh
 /// now warns when Helper/ changes without a bump.
-public let kMacWakeHelperVersion = "14"
+public let kMacWakeHelperVersion = "15"

@@ -440,3 +440,5 @@
 "macwake CLI" = "Công cụ dòng lệnh macwake";
 "status · charging · adapter · energy · fan" = "trạng thái · sạc · bộ sạc · năng lượng · quạt";
 "MANUAL_RESUME_AT_FMT" = "Tự khôi phục nguồn sạc khi pin xuống %d%%.";
+
+"FAN_RANGE_UNAVAILABLE" = "Không đọc được giới hạn quạt hợp lệ từ SMC. Đã khóa điều khiển quạt thủ công.";

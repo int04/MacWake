@@ -24,6 +24,10 @@ final class HelperService: NSObject, MacWakeHelperProtocol {
         reply(info.count, info.min, info.max)
     }
 
+    func getFanRanges(reply: @escaping (String) -> Void) {
+        reply(HelperSMC.getFanRanges())
+    }
+
     func setFanManual(_ manual: Bool, rpm: Int, reply: @escaping (Bool) -> Void) {
         // Answers later, from the fan queue: taking a fan over can wait several seconds for
         // the system to let go, and this call must not hold up the ones behind it.

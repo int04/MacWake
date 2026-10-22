@@ -1047,21 +1047,11 @@ struct MacWakeMenuView: View {
         }
     }
 
-    // Robust slider bounds: use the helper's reported min/max when valid, otherwise
-    // fall back to a sensible range (some Macs don't expose F0Mn/F0Mx).
+    // Never invent a hardware maximum. Keep a non-empty range for SwiftUI while
+    // the control is disabled when the SMC does not report valid fan limits.
     private var fanSliderMin: Double { Double(max(0, chargeLimit.fanMinRPM)) }
     private var fanSliderMax: Double {
-        let reported = chargeLimit.fanMaxRPM
-        let computed: Double
-        if reported > chargeLimit.fanMinRPM + 200 {
-            computed = Double(reported)
-        } else {
-            let observed = Int(tracker.currentFanSpeed ?? 0)
-            computed = Double(max(6500, observed + 1500))
-        }
-        // Guard against a garbage/uninitialized SMC min reading exceeding the computed
-        // max — Slider(in:) requires a non-reversed range or it crashes.
-        return max(computed, fanSliderMin + 100)
+        Double(max(chargeLimit.fanMaxRPM, chargeLimit.fanMinRPM + 100))
     }
 
     @ViewBuilder
@@ -1245,9 +1235,27 @@ struct MacWakeMenuView: View {
                     Text("Manual Fan Speed").font(.subheadline)
                     Spacer()
                     Toggle("", isOn: $chargeLimit.fanControlEnabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        .disabled(!chargeLimit.fanHardwareRangeValid)
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
                 .help("FAN_CONTROL_HELP")
+
+                if !chargeLimit.fanRangesDescription.isEmpty {
+                    rowDivider()
+                    Text(chargeLimit.fanRangesDescription.split(separator: "\n").map { line in
+                        let parts = line.split(separator: ":")
+                        guard parts.count == 3 else { return String(line) }
+                        return "Fan \(Int(parts[0]).map { $0 + 1 } ?? 0): \(parts[1])–\(parts[2]) RPM"
+                    }.joined(separator: " · "))
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                }
+                if !chargeLimit.fanHardwareRangeValid {
+                    rowDivider()
+                    Text("FAN_RANGE_UNAVAILABLE")
+                        .font(.system(size: 10)).foregroundColor(.orange)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                }
 
                 if chargeLimit.fanControlUnsupported {
                     rowDivider()
@@ -1293,6 +1301,7 @@ struct MacWakeMenuView: View {
                             in: fanSliderMin...fanSliderMax,
                             step: 100
                         )
+                        .disabled(!chargeLimit.fanHardwareRangeValid)
                         Text(String(localized: "FAN_SAFETY_NOTE"))
                             .font(.system(size: 10)).foregroundColor(.secondary)
                     }

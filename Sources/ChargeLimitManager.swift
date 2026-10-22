@@ -375,6 +375,8 @@ final class ChargeLimitManager: ObservableObject {
     @Published private(set) var fanCount = 0
     @Published private(set) var fanMinRPM = 0
     @Published private(set) var fanMaxRPM = 0
+    @Published private(set) var fanRangesDescription = ""
+    var fanHardwareRangeValid: Bool { fanMaxRPM > fanMinRPM + 200 }
 
     // A saved user preference is not a live SMC fan override. On launch and wake,
     // restore manual mode only after a fresh thermal sample and fan discovery.
@@ -1329,6 +1331,9 @@ final class ChargeLimitManager: ObservableObject {
                 self.fanCount = count
                 self.fanMinRPM = minRPM
                 self.fanMaxRPM = maxRPM
+                proxy.getFanRanges { [weak self] report in
+                    Task { @MainActor in self?.fanRangesDescription = report }
+                }
                 if self.fanTargetRPM == 0 {
                     // Safe default ~40% of max, never 0 (0 RPM would stop the fan).
                     self.fanTargetRPM = maxRPM > 0 ? max(minRPM, Int(Double(maxRPM) * 0.4)) : 2500
@@ -1435,6 +1440,15 @@ final class ChargeLimitManager: ObservableObject {
             _ = await xpcBool { reply in proxy.setFanManual(false, rpm: 0, reply: reply) }
             if !isRollingBackFanAfterFailure { fanControlUnsupported = false }
             isRollingBackFanAfterFailure = false
+            return
+        }
+
+        // An unknown or inconsistent hardware RPM range must never become a guessed
+        // manual fan limit.
+        guard fanHardwareRangeValid else {
+            fanControlUnsupported = true
+            isRollingBackFanAfterFailure = true
+            fanControlEnabled = false
             return
         }
 
