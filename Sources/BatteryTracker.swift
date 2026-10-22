@@ -78,6 +78,7 @@ class BatteryTracker: ObservableObject {
     private var magSafeSessionVersion: String?
     @Published var batteryCycles: Int = 0
     @Published var batteryTemperature: Double = 0.0
+    private(set) var lastBatteryTemperatureSampleAt: Date?
     @Published var temperatureSamples: [Double] = []
     // System thermal sensors (Apple Silicon). nil = sensor not available on this Mac.
     @Published var cpuTemperature: Double? = nil
@@ -882,6 +883,7 @@ class BatteryTracker: ObservableObject {
             }
             if let temp = rawTemp, temp > -40 {
                 batteryTemperature = temp
+                lastBatteryTemperatureSampleAt = Date()
                 temperatureSamples.append(temp)
                 if temperatureSamples.count > 5 {
                     temperatureSamples.removeFirst()
@@ -1353,6 +1355,7 @@ class BatteryTracker: ObservableObject {
                 // Both release their state with a blocking semaphore before returning here —
                 // see cancelCalibrationBeforeSleep/cancelFanControlBeforeSleep.
                 ChargeLimitManager.shared.cancelCalibrationBeforeSleep()
+                ChargeLimitManager.shared.cancelDischargeBeforeSleep()
                 ChargeLimitManager.shared.cancelManualPauseBeforeSleep()
                 ChargeLimitManager.shared.cancelFanControlBeforeSleep()
             }

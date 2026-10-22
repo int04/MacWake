@@ -1139,6 +1139,8 @@ struct MacWakeMenuView: View {
 
     private var calibrationPhaseText: String {
         switch chargeLimit.calibrationPhase {
+        case .precharge: return String(localized: "CALIBRATION_PRECHARGE_STATUS")
+        case .returnToLimit: return String(localized: "CALIBRATION_RETURN_STATUS")
         case .discharge: return String(localized: "Calibrating — discharging to 15%…")
         case .charge:    return String(localized: "Calibrating — charging to 100%…")
         case .hold:      return String(localized: "Calibrating — holding at 100%…")
@@ -1152,13 +1154,27 @@ struct MacWakeMenuView: View {
         if chargeLimit.helperStatus == .ready {
             sectionLabel("Discharge", icon: "battery.25percent")
             settingsCard {
+                HStack(spacing: 10) {
+                    iconTile("arrow.triangle.2.circlepath", .green)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Automatic Discharge to Charge Limit").font(.subheadline)
+                        Text("AUTO_DISCHARGE_HELP").font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $chargeLimit.automaticDischargeEnabled)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                rowDivider()
                 if chargeLimit.dischargeActive {
                     HStack(spacing: 11) {
                         iconTile("bolt.slash.fill", .orange)
                         VStack(alignment: .leading, spacing: 1) {
                             Text("Discharging").font(.subheadline)
                             Text(String(format: String(localized: "DISCHARGE_PROGRESS_FMT"),
-                                        tracker.currentBatteryLevel, chargeLimit.dischargeTarget))
+                                        tracker.currentBatteryLevel, chargeLimit.currentDischargeTarget))
                                 .font(.system(size: 11)).foregroundColor(.secondary)
                         }
                         Spacer()
@@ -1622,6 +1638,21 @@ struct MacWakeMenuView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
+
+                        HStack(spacing: 8) {
+                            Text("Calibration Schedule").font(.caption)
+                            Spacer()
+                            Picker("", selection: $chargeLimit.calibrationScheduleMode) {
+                                Text("Calibration Schedule Off").tag(0)
+                                Text("Monthly Reminder").tag(1)
+                                Text("Monthly Automatic Calibration").tag(2)
+                            }
+                            .labelsHidden()
+                            .frame(maxWidth: 190)
+                        }
+                        Text("CALIBRATION_SCHEDULE_HELP")
+                            .font(.system(size: 10)).foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
 
                         if chargeLimit.calibrationActive {
                             HStack(spacing: 5) {

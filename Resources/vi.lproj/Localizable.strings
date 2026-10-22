@@ -442,3 +442,18 @@
 "MANUAL_RESUME_AT_FMT" = "Tự khôi phục nguồn sạc khi pin xuống %d%%.";
 
 "FAN_RANGE_UNAVAILABLE" = "Không đọc được giới hạn quạt hợp lệ từ SMC. Đã khóa điều khiển quạt thủ công.";
+
+"Automatic Discharge to Charge Limit" = "Tự xả pin về giới hạn sạc";
+"AUTO_DISCHARGE_HELP" = "Khi đang cắm nguồn và pin cao hơn giới hạn ít nhất 5%, máy tự dùng pin để trở về mức giới hạn. Chỉ bắt đầu khi nhiệt độ pin được cập nhật và an toàn; không ngắt nguồn khi gập nắp cùng màn hình ngoài. Mặc định tắt.";
+
+"Calibration Schedule" = "Lịch hiệu chuẩn";
+"Calibration Schedule Off" = "Tắt";
+"Monthly Reminder" = "Nhắc mỗi 30 ngày";
+"Monthly Automatic Calibration" = "Tự hiệu chuẩn mỗi 30 ngày";
+"CALIBRATION_SCHEDULE_HELP" = "Mặc định nhắc kiểm tra mỗi 30 ngày. Chế độ tự động chỉ hoạt động khi bạn bật: sạc 100%, xả đến 15%, sạc lại 100%, giữ 1 giờ rồi trở về giới hạn sạc. Cần cắm nguồn, nhiệt độ an toàn và ứng dụng đang chạy; khi máy Sleep, chu trình sẽ bị hủy.";
+"Calibration Reminder" = "Nhắc hiệu chuẩn pin";
+"CALIBRATION_MONTHLY_REMINDER" = "Đã 30 ngày từ lần nhắc hoặc hiệu chuẩn trước. Bạn có thể hiệu chuẩn khi thuận tiện; không cần thường xuyên xả sâu để bảo vệ pin mỗi ngày.";
+"CALIBRATION_FULL_CYCLE_STARTED" = "Bắt đầu chu trình đầy đủ: 100% → 15% → 100% → giữ 1 giờ → trở về giới hạn sạc.";
+"CALIBRATION_PRECHARGE_STATUS" = "Đang hiệu chuẩn — sạc lên 100% trước…";
+"CALIBRATION_RETURN_STATUS" = "Đang hiệu chuẩn — xả về giới hạn sạc…";
+"CALIBRATION_UNSAFE_STOP" = "Đã dừng hiệu chuẩn do điều kiện nguồn điện, nhiệt độ hoặc màn hình thay đổi, không còn an toàn. Ứng dụng đã yêu cầu khôi phục nguồn sạc.";

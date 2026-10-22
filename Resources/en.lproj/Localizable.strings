@@ -178,3 +178,18 @@
 "MANUAL_RESUME_AT_FMT" = "Resumes automatically at %d%%.";
 
 "FAN_RANGE_UNAVAILABLE" = "SMC fan limits are unavailable or invalid. Manual fan control is disabled.";
+
+"Automatic Discharge to Charge Limit" = "Automatic Discharge to Charge Limit";
+"AUTO_DISCHARGE_HELP" = "When plugged in and at least 5% above the charge limit, automatically discharge back to that limit. Only starts with a fresh safe battery temperature; never cuts adapter power when the lid is closed with an external display. Default off.";
+
+"Calibration Schedule" = "Calibration schedule";
+"Calibration Schedule Off" = "Off";
+"Monthly Reminder" = "Remind every 30 days";
+"Monthly Automatic Calibration" = "Run automatically every 30 days";
+"CALIBRATION_SCHEDULE_HELP" = "Monthly reminder is the default. Automatic mode is opt-in: charge to 100%, discharge to 15%, recharge to 100%, hold for 1 hour, then return to the charge limit. Requires AC power, safe battery temperature, and an active app; sleep cancels the cycle.";
+"Calibration Reminder" = "Calibration reminder";
+"CALIBRATION_MONTHLY_REMINDER" = "It has been 30 days since your last calibration reminder or cycle. Run calibration when convenient; routine deep cycling is not needed for everyday battery health.";
+"CALIBRATION_FULL_CYCLE_STARTED" = "Starting a full cycle: 100% → 15% → 100% → 1-hour hold → charge limit.";
+"CALIBRATION_PRECHARGE_STATUS" = "Calibrating — charging to 100% first…";
+"CALIBRATION_RETURN_STATUS" = "Calibrating — returning to the charge limit…";
+"CALIBRATION_UNSAFE_STOP" = "The calibration was stopped due to an unsafe or changed power, temperature, or display condition. Charging restoration was requested.";
