@@ -151,36 +151,6 @@ final class ChargeLimitManager: ObservableObject {
     /// recharge threshold. Not persisted: quitting restores charging safely.
     @Published private(set) var manualChargePaused = false
 
-    @Published var keepHDMIAwakeOnBattery = false {
-        didSet {
-            if !keepHDMIAwakeOnBattery { releaseExternalDisplayAwakeAssertion() }
-            else { refreshExternalDisplayAwakeAssertion() }
-        }
-    }
-    private var externalDisplayAwakeAssertion: IOPMAssertionID = 0
-
-    private func refreshExternalDisplayAwakeAssertion() {
-        let shouldRun = keepHDMIAwakeOnBattery && manualChargePaused
-            && LidAndDisplay.externalDisplayAttached()
-        if shouldRun && externalDisplayAwakeAssertion == 0 {
-            var identifier: IOPMAssertionID = 0
-            let result = IOPMAssertionCreateWithName(
-                kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
-                IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                "MacWakeLocal: external display on battery" as CFString,
-                &identifier)
-            if result == kIOReturnSuccess { externalDisplayAwakeAssertion = identifier }
-        } else if !shouldRun { releaseExternalDisplayAwakeAssertion() }
-    }
-
-    private func releaseExternalDisplayAwakeAssertion() {
-        if externalDisplayAwakeAssertion != 0 {
-            IOPMAssertionRelease(externalDisplayAwakeAssertion)
-            externalDisplayAwakeAssertion = 0
-        }
-    }
-
-
     func stopChargingNow(batteryLevel: Int) {
         guard helperStatus == .ready, isEnabled, !calibrationActive,
               !dischargeActive, !topUpActive, !scheduledChargeActive else { return }
@@ -188,9 +158,8 @@ final class ChargeLimitManager: ObservableObject {
         guard batteryLevel > lower else { return }
         // Never cut adapter input in clamshell with an external display.
         // Unknown hardware capability is treated conservatively.
-        guard !manualPauseClamshellUnsafe || keepHDMIAwakeOnBattery else { return }
+        guard !manualPauseClamshellUnsafe else { return }
         manualChargePaused = true
-        refreshExternalDisplayAwakeAssertion()
         Task {
             if firmwareLimitActive { await releaseFirmwareLimit() }
             await applyChargingAllowed(false)
@@ -198,7 +167,7 @@ final class ChargeLimitManager: ObservableObject {
     }
 
     private var manualPauseClamshellUnsafe: Bool {
-        holdCutsAdapter != false && !keepHDMIAwakeOnBattery && LidAndDisplay.lidIsClosed()
+        holdCutsAdapter != false && LidAndDisplay.lidIsClosed()
             && LidAndDisplay.externalDisplayAttached()
     }
 
@@ -207,13 +176,11 @@ final class ChargeLimitManager: ObservableObject {
     func cancelManualPauseBeforeSleep() {
         guard manualChargePaused else { return }
         manualChargePaused = false
-        releaseExternalDisplayAwakeAssertion()
         restoreChargingSynchronously()
     }
 
     func cancelManualChargePause() {
         manualChargePaused = false
-        releaseExternalDisplayAwakeAssertion()
         Task { await restoreCharging() }
     }
 
@@ -409,8 +376,13 @@ final class ChargeLimitManager: ObservableObject {
     @Published private(set) var fanMinRPM = 0
     @Published private(set) var fanMaxRPM = 0
 
+    // A saved user preference is not a live SMC fan override. On launch and wake,
+    // restore manual mode only after a fresh thermal sample and fan discovery.
+    private var fanResumePending = false
+
     @Published var fanControlEnabled: Bool {
         didSet {
+            if !fanControlEnabled { fanResumePending = false }
             UserDefaults.standard.set(fanControlEnabled, forKey: "fanControlEnabled")
             Task { await applyFan() }
         }
@@ -514,7 +486,8 @@ final class ChargeLimitManager: ObservableObject {
         self.sailingEnabled = d.bool(forKey: "sailingEnabled")
         let savedLower = d.integer(forKey: "sailingLower")
         self.sailingLower = savedLower == 0 ? max(40, lim - 10) : min(lim - 5, max(40, savedLower))
-        self.fanControlEnabled = d.bool(forKey: "fanControlEnabled")
+        self.fanControlEnabled = false
+        self.fanResumePending = d.bool(forKey: "fanControlEnabled")
         self.fanTargetRPM = d.integer(forKey: "fanTargetRPM")
         self.heatGuardEnabled = d.bool(forKey: "heatGuardEnabled")
         self.scheduledChargeEnabled = d.bool(forKey: "scheduledChargeEnabled")
@@ -840,15 +813,8 @@ final class ChargeLimitManager: ObservableObject {
             }
         }
         _ = sem.wait(timeout: .now() + 2)
-        // Manual fan control has no thermal failsafe while the app isn't running to enforce
-        // it — a relaunch silently re-forcing the same target with no fresh safety context
-        // was exactly the surprise boundary reported in #16 ("quit's SMC cleanup works, but
-        // relaunch re-enables manual mode"). Writing the default directly, not through the
-        // @Published setter, since the process is exiting and only the persisted value for
-        // next launch matters — the setter's own async restore Task would be pointless here.
-        if needsFan {
-            UserDefaults.standard.set(false, forKey: "fanControlEnabled")
-        }
+        // Preserve the user's preference, not the unsafe live SMC override.
+        // The next launch waits for a fresh thermal reading before restoring it.
     }
 
     // MARK: - Control loop
@@ -878,10 +844,8 @@ final class ChargeLimitManager: ObservableObject {
         // Never keep the battery blocked below that floor: release BOTH SMC blocks.
         if manualChargePaused {
             let lower = sailingEnabled ? sailingLower : limit - hysteresis
-            refreshExternalDisplayAwakeAssertion()
             if manualPauseClamshellUnsafe || batteryLevel <= lower {
                 manualChargePaused = false
-                releaseExternalDisplayAwakeAssertion()
                 Task { await restoreCharging() }
             } else {
                 if firmwareLimitActive {
@@ -1514,8 +1478,8 @@ final class ChargeLimitManager: ObservableObject {
     /// testing (#16) found manual mode surviving real system sleep/wake untouched, because
     /// the only cleanup attempted was an async Task queued from the willSleep notification —
     /// not guaranteed to run before the OS actually suspends. Blocks on a semaphore like the
-    /// calibration path, and clears the persisted preference so wake can't silently reapply
-    /// a target that was never re-confirmed safe for whatever comes after sleep.
+    /// calibration path. The saved preference survives sleep, but the fan override
+    /// is only reapplied after fresh thermal and fan information is available.
     func cancelFanControlBeforeSleep() {
         guard fanControlEnabled else { return }
         if let proxy = remoteProxy() {
@@ -1524,6 +1488,9 @@ final class ChargeLimitManager: ObservableObject {
             _ = semaphore.wait(timeout: .now() + 2)
         }
         fanControlEnabled = false
+        // Keep the requested mode in preferences while the hardware is back on auto.
+        UserDefaults.standard.set(true, forKey: "fanControlEnabled")
+        fanResumePending = true
     }
 
     /// Builds a copyable fan report and puts it on the pasteboard. Console logging proved
@@ -1815,6 +1782,14 @@ final class ChargeLimitManager: ObservableObject {
     }
 
     func fanTemperatureCheck(maxTempC: Double) {
+        if fanResumePending, helperStatus == .ready, fanCount > 0, maxTempC > 0 {
+            fanResumePending = false
+            if maxTempC < fanFailsafeTempC {
+                fanControlEnabled = true
+            } else {
+                UserDefaults.standard.set(false, forKey: "fanControlEnabled")
+            }
+        }
         guard fanControlEnabled, fanCount > 0, maxTempC >= fanFailsafeTempC else { return }
         fanControlEnabled = false   // didSet restores auto
         DynamicIslandManager.shared.trigger(.alert(

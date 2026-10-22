@@ -1406,20 +1406,6 @@ struct MacWakeMenuView: View {
                     }
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     rowDivider()
-                    HStack(spacing: 10) {
-                        iconTile("display", .blue)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Keep HDMI Awake on Battery (Experimental)")
-                                .font(.system(size: 11))
-                            Text("Attempts to prevent idle sleep; macOS may still sleep on lid close.")
-                                .font(.system(size: 10)).foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        Toggle("", isOn: $chargeLimit.keepHDMIAwakeOnBattery)
-                            .labelsHidden().toggleStyle(.switch).controlSize(.small)
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    rowDivider()
                     sliderBlock {
                         HStack {
                             Text("Stop at").font(.caption).foregroundColor(.secondary)
