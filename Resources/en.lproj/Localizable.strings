@@ -174,3 +174,5 @@
 "FINISH_YELLOW" = "Yellow";
 "FINISH_ORANGE" = "Orange";
 "FINISH_PURPLE" = "Purple";
+
+"MANUAL_RESUME_AT_FMT" = "Resumes automatically at %d%%.";

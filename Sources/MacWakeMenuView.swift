@@ -1388,7 +1388,7 @@ struct MacWakeMenuView: View {
                             Text(chargeLimit.manualChargePaused ? "Charging Paused" : "Stop Charging Now")
                                 .font(.subheadline)
                             Text(chargeLimit.manualChargePaused
-                                 ? "Resumes automatically at \(chargeLimit.sailingEnabled ? chargeLimit.sailingLower : chargeLimit.limit - 5)%."
+                                 ? String(format: String(localized: "MANUAL_RESUME_AT_FMT"), chargeLimit.sailingEnabled ? chargeLimit.sailingLower : chargeLimit.limit - 5)
                                  : "Pause charging now; the charge limit will resume it automatically.")
                                 .font(.system(size: 10)).foregroundColor(.secondary)
                         }
