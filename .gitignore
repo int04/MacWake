@@ -2,6 +2,7 @@
 .build/
 *.dSYM/
 MacWake.app/
+MacWakeLocal.app/
 AppIcon.iconset/
 .tempmediaStorage/
 *~
