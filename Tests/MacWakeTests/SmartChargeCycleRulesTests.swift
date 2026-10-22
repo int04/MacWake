@@ -18,6 +18,12 @@ final class SmartChargeCycleRulesTests: XCTestCase {
         )
     }
 
+    func testAllowsTwentyPercentChargeLimit() {
+        XCTAssertTrue(allowed(batteryLevel: 25, chargeLimit: 20))
+        XCTAssertFalse(allowed(batteryLevel: 24, chargeLimit: 20))
+        XCTAssertFalse(allowed(batteryLevel: 24, chargeLimit: 19))
+    }
+
     func testStartsOnlyFivePointsOverLimit() {
         XCTAssertTrue(allowed(batteryLevel: 85))
         XCTAssertFalse(allowed(batteryLevel: 84))

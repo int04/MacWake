@@ -136,7 +136,7 @@ final class ChargeLimitManager: ObservableObject {
 
     @Published var limit: Int {
         didSet {
-            let clamped = min(95, max(50, limit))
+            let clamped = min(95, max(20, limit))
             if clamped != limit { limit = clamped; return }
             UserDefaults.standard.set(limit, forKey: "chargeLimitValue")
             if sailingLower > limit - 5 { sailingLower = limit - 5 }
@@ -157,9 +157,8 @@ final class ChargeLimitManager: ObservableObject {
               !dischargeActive, !topUpActive, !scheduledChargeActive else { return }
         let lower = sailingEnabled ? sailingLower : limit - hysteresis
         guard batteryLevel > lower else { return }
-        // Never cut adapter input in clamshell with an external display.
-        // Unknown hardware capability is treated conservatively.
-        guard !manualPauseClamshellUnsafe else { return }
+        // Stop Charging Now is an explicit user action. Unlike the automatic
+        // standing limit, it must not be silently ignored in clamshell mode.
         manualChargePaused = true
         Task {
             if firmwareLimitActive { await releaseFirmwareLimit() }
@@ -167,12 +166,7 @@ final class ChargeLimitManager: ObservableObject {
         }
     }
 
-    private var manualPauseClamshellUnsafe: Bool {
-        holdCutsAdapter != false && LidAndDisplay.lidIsClosed()
-            && LidAndDisplay.externalDisplayAttached()
-    }
-
-    /// Restore adapter power synchronously before suspension, when the app-side
+     /// Restore adapter power synchronously before suspension, when the app-side
     /// control loop cannot guarantee a timely recovery.
     func cancelManualPauseBeforeSleep() {
         guard manualChargePaused else { return }
@@ -216,12 +210,12 @@ final class ChargeLimitManager: ObservableObject {
         }
     }
     /// Never drain below this, however low the user drags the slider.
-    private let dischargeFloor = 20
+    private let dischargeFloor = 5
 
     func startDischarge() {
         guard helperStatus == .ready, isEnabled, !dischargeActive, !calibrationActive,
               !topUpActive, !scheduledChargeActive, !manualChargePaused,
-              !(LidAndDisplay.lidIsClosed() && LidAndDisplay.externalDisplayAttached()) else { return }
+              !clamshellAdapterCutBlocked else { return }
         dischargeGeneration += 1
         dischargeApplyInFlight = false
         dischargeActive = true
@@ -446,7 +440,7 @@ final class ChargeLimitManager: ObservableObject {
 
     @Published var sailingLower: Int {
         didSet {
-            let clamped = min(limit - 5, max(40, sailingLower))
+            let clamped = min(limit - 5, max(10, sailingLower))
             if clamped != sailingLower { sailingLower = clamped; return }
             UserDefaults.standard.set(sailingLower, forKey: "sailingLower")
         }
@@ -555,6 +549,14 @@ final class ChargeLimitManager: ObservableObject {
     private var firmwareVerifiedAt: Date?
     private let firmwareVerifyInterval: TimeInterval = 300
 
+    private var clamshellAdapterCutBlocked: Bool {
+        ClamshellGuard.shouldSuppressAdapterCut(
+            lidClosed: LidAndDisplay.lidIsClosed(),
+            externalDisplayAttached: LidAndDisplay.externalDisplayAttached(),
+            allowOverride: allowCutInClamshell
+        )
+    }
+
     /// Opt-out of the clamshell guard (see `ClamshellGuard`): cut the adapter even with the lid
     /// closed and a display attached, accepting that the display may drop.
     @Published var allowCutInClamshell: Bool {
@@ -597,11 +599,11 @@ final class ChargeLimitManager: ObservableObject {
         let d = UserDefaults.standard
         self.isEnabled = d.bool(forKey: "chargeLimitEnabled")
         let savedLimit = d.integer(forKey: "chargeLimitValue")
-        let lim = savedLimit == 0 ? 80 : min(95, max(50, savedLimit))
+        let lim = savedLimit == 0 ? 80 : min(95, max(20, savedLimit))
         self.limit = lim
         self.sailingEnabled = d.bool(forKey: "sailingEnabled")
         let savedLower = d.integer(forKey: "sailingLower")
-        self.sailingLower = savedLower == 0 ? max(40, lim - 10) : min(lim - 5, max(40, savedLower))
+        self.sailingLower = savedLower == 0 ? max(10, lim - 10) : min(lim - 5, max(10, savedLower))
         self.fanControlEnabled = false
         self.fanResumePending = d.bool(forKey: "fanControlEnabled")
         self.fanTargetRPM = d.integer(forKey: "fanTargetRPM")
@@ -610,7 +612,7 @@ final class ChargeLimitManager: ObservableObject {
         let savedSchedule = d.object(forKey: "scheduledChargeMinutes") as? Int
         self.scheduledChargeMinutes = savedSchedule.map { min(1439, max(0, $0)) } ?? 540   // default 09:00
         let savedDischarge = d.object(forKey: "dischargeTarget") as? Int
-        self.dischargeTarget = savedDischarge.map { min(95, max(20, $0)) } ?? 60
+        self.dischargeTarget = savedDischarge.map { min(95, max(5, $0)) } ?? 60
         self.automaticDischargeEnabled = d.bool(forKey: "automaticDischargeEnabled")
         self.calibrationScheduleMode = min(2, max(0, d.object(forKey: "calibrationScheduleMode") as? Int ?? 1))
         self.calibrationScheduleLastHandled = d.object(forKey: "calibrationScheduleLastHandled") as? Date ?? Date()
@@ -973,7 +975,7 @@ final class ChargeLimitManager: ObservableObject {
             Date().timeIntervalSince($0) >= 0 && Date().timeIntervalSince($0) < 120
         } ?? false
         let batteryTemp = sampleFresh ? (sensor?.batteryTemperature ?? 0) : 0
-        let unsafeClamshell = LidAndDisplay.lidIsClosed() && LidAndDisplay.externalDisplayAttached()
+        let unsafeClamshell = clamshellAdapterCutBlocked
         let scheduledNow = scheduledChargeWindow(batteryLevel: batteryLevel)
         let conflictingMode = calibrationActive || topUpActive || scheduledNow
             || manualChargePaused || heatGuardPaused || externalHoldPercent != nil
@@ -1026,7 +1028,7 @@ final class ChargeLimitManager: ObservableObject {
         // Never keep the battery blocked below that floor: release BOTH SMC blocks.
         if manualChargePaused {
             let lower = sailingEnabled ? sailingLower : limit - hysteresis
-            if manualPauseClamshellUnsafe || batteryLevel <= lower {
+            if batteryLevel <= lower {
                 manualChargePaused = false
                 Task { await restoreCharging() }
             } else {
@@ -1446,7 +1448,7 @@ final class ChargeLimitManager: ObservableObject {
     private func startCalibration(batteryLevel: Int, fullCycle: Bool = false) {
         guard helperStatus == .ready, isEnabled, !calibrationActive, !dischargeActive,
               !manualChargePaused, !topUpActive, !scheduledChargeActive,
-              !(LidAndDisplay.lidIsClosed() && LidAndDisplay.externalDisplayAttached()) else { return }
+              !clamshellAdapterCutBlocked else { return }
         let alreadyAtFloor = CalibrationRecovery.shouldRestoreImmediately(
             batteryLevel: batteryLevel, dischargeFloor: calibrationDischargeFloor
         )

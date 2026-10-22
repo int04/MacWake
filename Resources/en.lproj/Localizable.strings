@@ -193,3 +193,8 @@
 "CALIBRATION_PRECHARGE_STATUS" = "Calibrating — charging to 100% first…";
 "CALIBRATION_RETURN_STATUS" = "Calibrating — returning to the charge limit…";
 "CALIBRATION_UNSAFE_STOP" = "The calibration was stopped due to an unsafe or changed power, temperature, or display condition. Charging restoration was requested.";
+
+"CL_LIMIT_PAUSED_CLAMSHELL" = "Charge limit paused — lid closed";
+"CL_CLAMSHELL_ACTION_HINT" = "To enforce the limit with the lid closed, enable the adapter-cut override above. This may briefly disconnect an external display.";
+
+"DISCHARGE_LOW_TARGET_WARNING" = "Discharging below 20% can cause unexpected sleep or shutdown. A 5% target is high risk; stay connected to power and monitor the battery.";

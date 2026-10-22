@@ -1223,7 +1223,13 @@ struct MacWakeMenuView: View {
                     sliderBlock {
                         Slider(value: Binding(get: { Double(chargeLimit.dischargeTarget) },
                                               set: { chargeLimit.dischargeTarget = Int($0) }),
-                               in: 20...95, step: 5).tint(.orange)
+                               in: 5...95, step: 5).tint(.orange)
+                        if chargeLimit.dischargeTarget < 20 {
+                            Label("DISCHARGE_LOW_TARGET_WARNING", systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
             }
@@ -1437,7 +1443,7 @@ struct MacWakeMenuView: View {
                             Spacer()
                             Text("\(chargeLimit.limit)%").font(.caption.bold()).foregroundColor(.green)
                         }
-                        Slider(value: Binding(get: { Double(chargeLimit.limit) }, set: { chargeLimit.limit = Int($0) }), in: 50...95, step: 5).tint(.green)
+                        Slider(value: Binding(get: { Double(chargeLimit.limit) }, set: { chargeLimit.limit = Int($0) }), in: 20...95, step: 5).tint(.green)
                         // One-tap presets for the common limits.
                         HStack(spacing: 6) {
                             ForEach([60, 70, 80, 90], id: \.self) { preset in
@@ -1506,13 +1512,20 @@ struct MacWakeMenuView: View {
                                     .toggleStyle(.switch).controlSize(.mini)
                                 }
                                 if chargeLimit.clamshellHoldSuppressed {
-                                    HStack(alignment: .top, spacing: 5) {
-                                        Image(systemName: "display")
-                                            .font(.system(size: 9)).foregroundColor(.orange)
+                                    VStack(alignment: .leading, spacing: 7) {
+                                        Label("CL_LIMIT_PAUSED_CLAMSHELL", systemImage: "exclamationmark.triangle.fill")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(.orange)
                                         Text("CL_CLAMSHELL_SUPPRESSED")
                                             .font(.system(size: 10)).foregroundColor(.secondary)
                                             .fixedSize(horizontal: false, vertical: true)
+                                        Text("CL_CLAMSHELL_ACTION_HINT")
+                                            .font(.system(size: 10, weight: .medium)).foregroundColor(.orange)
                                     }
+                                    .padding(9)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color.orange.opacity(0.08))
+                                    .cornerRadius(8)
                                 }
 
                                 // Upgraded users had this switch turned on for them without
@@ -1621,7 +1634,7 @@ struct MacWakeMenuView: View {
                                 Spacer()
                                 Text("\(chargeLimit.sailingLower)%").font(.caption.bold()).foregroundColor(.blue)
                             }
-                            Slider(value: Binding(get: { Double(chargeLimit.sailingLower) }, set: { chargeLimit.sailingLower = Int($0) }), in: 40...Double(max(45, chargeLimit.limit - 5)), step: 5).tint(.blue)
+                            Slider(value: Binding(get: { Double(chargeLimit.sailingLower) }, set: { chargeLimit.sailingLower = Int($0) }), in: 10...Double(chargeLimit.limit - 5), step: 5).tint(.blue)
                             Text(String(format: String(localized: "SAILING_DESC_FMT"), chargeLimit.sailingLower, chargeLimit.limit))
                                 .font(.system(size: 10)).foregroundColor(.secondary)
                         }

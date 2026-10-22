@@ -28,7 +28,7 @@ enum SmartChargeCycleRules {
         lidClosedWithExternalDisplay: Bool, conflictingMode: Bool
     ) -> Bool {
         enabled && armed && helperReady && physicallyPlugged
-            && (50...95).contains(chargeLimit)
+            && (20...95).contains(chargeLimit)
             && batteryLevel >= chargeLimit + activationMargin
             && batteryTemperatureC >= minimumValidBatteryTemperatureC
             && batteryTemperatureC < maximumBatteryTemperatureC

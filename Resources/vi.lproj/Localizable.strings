@@ -457,3 +457,8 @@
 "CALIBRATION_PRECHARGE_STATUS" = "Đang hiệu chuẩn — sạc lên 100% trước…";
 "CALIBRATION_RETURN_STATUS" = "Đang hiệu chuẩn — xả về giới hạn sạc…";
 "CALIBRATION_UNSAFE_STOP" = "Đã dừng hiệu chuẩn do điều kiện nguồn điện, nhiệt độ hoặc màn hình thay đổi, không còn an toàn. Ứng dụng đã yêu cầu khôi phục nguồn sạc.";
+
+"CL_LIMIT_PAUSED_CLAMSHELL" = "Đã tạm dừng giới hạn sạc — đang gập nắp";
+"CL_CLAMSHELL_ACTION_HINT" = "Để giới hạn sạc khi gập nắp, hãy bật tùy chọn ngắt adapter phía trên. Màn hình ngoài có thể bị ngắt tín hiệu tạm thời.";
+
+"DISCHARGE_LOW_TARGET_WARNING" = "Xả pin xuống dưới 20% có thể khiến máy Sleep hoặc tắt đột ngột. Mức 5% có rủi ro cao; hãy giữ cáp sạc và theo dõi pin.";
