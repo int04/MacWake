@@ -1331,8 +1331,11 @@ class BatteryTracker: ObservableObject {
         let center = NSWorkspace.shared.notificationCenter
         
         center.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 self?.handleStateTransition(to: "screenSleep")
+                // A display can sleep while Amphetamine keeps the system awake.
+                // Release manual fan control when the closed lid has no external display.
+                ChargeLimitManager.shared.refreshFanForDisplayState()
             }
         }
         

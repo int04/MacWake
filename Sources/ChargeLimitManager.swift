@@ -2052,7 +2052,19 @@ final class ChargeLimitManager: ObservableObject {
         }
     }
 
+    /// A closed lid without an active external display is not necessarily system sleep
+    /// (e.g. a sleep-prevention utility). Never leave a forced RPM running in that state.
+    func refreshFanForDisplayState() {
+        let unattended = LidAndDisplay.lidIsClosed() && !LidAndDisplay.externalDisplayAttached()
+        if unattended && fanControlEnabled {
+            cancelFanControlBeforeSleep()
+        }
+    }
+
     func fanTemperatureCheck(maxTempC: Double) {
+        refreshFanForDisplayState()
+        let unattended = LidAndDisplay.lidIsClosed() && !LidAndDisplay.externalDisplayAttached()
+        guard !unattended else { return }
         if fanResumePending, helperStatus == .ready, fanCount > 0, maxTempC > 0 {
             fanResumePending = false
             if maxTempC < fanFailsafeTempC {
