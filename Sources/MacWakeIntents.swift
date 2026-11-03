@@ -11,7 +11,7 @@ struct SetChargeLimitIntent: AppIntent {
     static let title: LocalizedStringResource = "Set Charge Limit"
     static let description = IntentDescription("Turns on charge limiting and sets the maximum battery percentage.")
 
-    @Parameter(title: "Limit (%)", inclusiveRange: (50, 95))
+    @Parameter(title: "Limit (%)", inclusiveRange: (20, 95))
     var limit: Int
 
     @MainActor
@@ -23,21 +23,6 @@ struct SetChargeLimitIntent: AppIntent {
         manager.limit = limit
         if !manager.isEnabled { manager.isEnabled = true }
         return .result(dialog: IntentDialog(stringLiteral: String(format: String(localized: "INTENT_LIMIT_SET_FMT"), manager.limit)))
-    }
-}
-
-struct TopUpIntent: AppIntent {
-    static let title: LocalizedStringResource = "Charge to 100% Once"
-    static let description = IntentDescription("Overrides the charge limit for a single full charge, then re-applies it automatically.")
-
-    @MainActor
-    func perform() async throws -> some IntentResult & ProvidesDialog {
-        let manager = ChargeLimitManager.shared
-        guard manager.helperStatus == .ready else {
-            return .result(dialog: IntentDialog(stringLiteral: String(localized: "Advanced Controls aren't set up yet — enable them once in MacWake's settings.")))
-        }
-        manager.topUp(true)
-        return .result(dialog: IntentDialog(stringLiteral: String(localized: "Topping up to 100% — the limit resumes when full.")))
     }
 }
 
@@ -82,14 +67,6 @@ struct BatteryStatusIntent: AppIntent {
 
 struct MacWakeShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
-        #if !APPSTORE
-        AppShortcut(
-            intent: TopUpIntent(),
-            phrases: ["Charge to full with \(.applicationName)"],
-            shortTitle: "Charge to 100% Once",
-            systemImageName: "battery.100.bolt"
-        )
-        #endif
         AppShortcut(
             intent: BatteryStatusIntent(),
             phrases: ["Get battery status with \(.applicationName)"],

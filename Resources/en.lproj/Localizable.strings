@@ -198,3 +198,30 @@
 "CL_CLAMSHELL_ACTION_HINT" = "To enforce the limit with the lid closed, enable the adapter-cut override above. This may briefly disconnect an external display.";
 
 "DISCHARGE_LOW_TARGET_WARNING" = "Discharging below 20% can cause unexpected sleep or shutdown. A 5% target is high risk; stay connected to power and monitor the battery.";
+
+"TWO_MODE_NORMAL_TITLE" = "Charge Limit";
+"TWO_MODE_NORMAL_DESC" = "Above Max: discharge to Max. Below Max: charge to Max. At Max: stop charging while staying on adapter power.";
+"TWO_MODE_SPECIAL_TITLE" = "Special Discharge Cycle";
+"TWO_MODE_SPECIAL_DESC" = "Temporarily override Charge Limit: discharge to Target, recharge to Max, then return to normal. Stop at any time.";
+"TWO_MODE_MAX" = "Maximum battery level";
+"TWO_MODE_TARGET" = "Discharge target";
+"TWO_MODE_START" = "Start Cycle";
+"TWO_MODE_STOP" = "Stop";
+"TWO_MODE_CYCLE_DISCHARGING" = "Discharging to target";
+"TWO_MODE_CYCLE_RECHARGING" = "Recharging to maximum";
+"TWO_MODE_CYCLE_PROGRESS" = "Battery %d%% · Target %d%% · Max %d%%";
+"TWO_MODE_CONFIRM" = "Discharge to %d%%, then charge back up to %d%%? The normal limit will be paused until completion or Stop.";
+"TWO_MODE_CHECKING" = "Checking the SMC charge-control method…";
+"TWO_MODE_UNSUPPORTED" = "This Mac does not expose a verified way to stop charging while remaining on adapter power. Battery bypass at Max is unavailable; automatic discharge is disabled instead of silently draining the battery.";
+"TWO_MODE_NORMAL_SUSPENDED" = "Normal charge limiting is paused during the special cycle.";
+"TWO_MODE_NEEDS_AC" = "Connect the power adapter to manage charging.";
+"TWO_MODE_HOLDING" = "At Max: charging inhibited, adapter power enabled.";
+"TWO_MODE_DRAINING" = "Above Max: discharging toward your limit.";
+"TWO_MODE_CHARGING" = "Below Max: charging toward your limit.";
+"TWO_MODE_SWITCHING" = "Synchronizing charging state with SMC…";
+"TWO_MODE_DISCHARGE_PAUSED" = "Discharge paused: battery temperature data or clamshell conditions are unsafe. Charging is inhibited where supported.";
+"TWO_MODE_TIMEOUT" = "Special cycle timed out and returned to the normal charge limit.";
+"TWO_MODE_COMMAND_FAILED" = "SMC charge-control command failed. Power restoration was attempted.";
+
+"TWO_MODE_ADAPTER_FALLBACK" = "This Mac uses adapter cut (CHIE), not true AC bypass: discharge to %d%%, reconnect AC, then allow up to %d%% before cutting again. Battery may recharge during this interval.";
+"TWO_MODE_AC_RESTORED" = "AC power restored. Battery may continue charging.";

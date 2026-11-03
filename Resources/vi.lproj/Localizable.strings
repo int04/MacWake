@@ -462,3 +462,30 @@
 "CL_CLAMSHELL_ACTION_HINT" = "Để giới hạn sạc khi gập nắp, hãy bật tùy chọn ngắt adapter phía trên. Màn hình ngoài có thể bị ngắt tín hiệu tạm thời.";
 
 "DISCHARGE_LOW_TARGET_WARNING" = "Xả pin xuống dưới 20% có thể khiến máy Sleep hoặc tắt đột ngột. Mức 5% có rủi ro cao; hãy giữ cáp sạc và theo dõi pin.";
+
+"TWO_MODE_NORMAL_TITLE" = "Giới hạn sạc";
+"TWO_MODE_NORMAL_DESC" = "Trên Max: xả về Max. Dưới Max: sạc lên Max. Đúng Max: ngừng nạp và dùng nguồn adapter.";
+"TWO_MODE_SPECIAL_TITLE" = "Chu trình xả đặc biệt";
+"TWO_MODE_SPECIAL_DESC" = "Tạm dừng giới hạn sạc thường: xả xuống Target, nạp lại Max rồi tự trở về bình thường. Có thể Dừng bất kỳ lúc nào.";
+"TWO_MODE_MAX" = "Giới hạn Max";
+"TWO_MODE_TARGET" = "Mức xả Target";
+"TWO_MODE_START" = "Bắt đầu chu trình";
+"TWO_MODE_STOP" = "Dừng";
+"TWO_MODE_CYCLE_DISCHARGING" = "Đang xả xuống Target";
+"TWO_MODE_CYCLE_RECHARGING" = "Đang sạc lại đến Max";
+"TWO_MODE_CYCLE_PROGRESS" = "Pin %d%% · Target %d%% · Max %d%%";
+"TWO_MODE_CONFIRM" = "Xả xuống %d%% rồi sạc lại lên %d%%? Giới hạn thường sẽ tạm dừng cho đến khi hoàn tất hoặc bạn bấm Dừng.";
+"TWO_MODE_CHECKING" = "Đang kiểm tra phương thức điều khiển sạc SMC…";
+"TWO_MODE_UNSUPPORTED" = "Máy không cung cấp cơ chế đã xác minh để ngừng nạp mà vẫn dùng nguồn adapter. Không hỗ trợ giữ Max bằng nguồn trực tiếp; ứng dụng tắt xả tự động thay vì tiếp tục làm hao pin.";
+"TWO_MODE_NORMAL_SUSPENDED" = "Đã tạm dừng giới hạn sạc thường trong lúc chạy chu trình đặc biệt.";
+"TWO_MODE_NEEDS_AC" = "Hãy kết nối bộ sạc để điều khiển giới hạn pin.";
+"TWO_MODE_HOLDING" = "Đã đạt Max: ngừng nạp pin, tiếp tục dùng nguồn adapter.";
+"TWO_MODE_DRAINING" = "Trên Max: đang xả pin về mức giới hạn.";
+"TWO_MODE_CHARGING" = "Dưới Max: đang sạc lên mức giới hạn.";
+"TWO_MODE_SWITCHING" = "Đang đồng bộ trạng thái sạc với SMC…";
+"TWO_MODE_DISCHARGE_PAUSED" = "Tạm dừng xả: dữ liệu nhiệt độ hoặc trạng thái gập nắp chưa an toàn. Ngừng nạp nếu SMC hỗ trợ.";
+"TWO_MODE_TIMEOUT" = "Chu trình đặc biệt đã quá thời hạn, chuyển về giới hạn sạc thường.";
+"TWO_MODE_COMMAND_FAILED" = "Lệnh điều khiển SMC thất bại. Ứng dụng đã thử khôi phục nguồn.";
+
+"TWO_MODE_ADAPTER_FALLBACK" = "Máy dùng cơ chế ngắt adapter (CHIE), không phải dùng AC trực tiếp và bỏ qua pin: xả về %d%%, nối lại AC, rồi có thể sạc đến %d%% trước lần xả tiếp theo.";
+"TWO_MODE_AC_RESTORED" = "Đã kết nối lại nguồn AC. Pin có thể tiếp tục được nạp.";

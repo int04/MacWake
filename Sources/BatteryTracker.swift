@@ -761,6 +761,11 @@ class BatteryTracker: ObservableObject {
         }
     }
 
+    /// Fresh IOPS sample for the five-second charge/discharge safety monitor.
+    func chargeControlSample() -> (level: Int, plugged: Bool) {
+        (getBatteryLevel(), isACPowerConnected())
+    }
+
     private func getBatteryLevel() -> Int {
         let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()
         let sources = IOPSCopyPowerSourcesList(snapshot).takeRetainedValue() as Array
@@ -1357,6 +1362,7 @@ class BatteryTracker: ObservableObject {
                 self?.handleStateTransition(to: "systemSleep")
                 // Both release their state with a blocking semaphore before returning here —
                 // see cancelCalibrationBeforeSleep/cancelFanControlBeforeSleep.
+                ChargeLimitManager.shared.prepareTwoModeForSleep()
                 ChargeLimitManager.shared.cancelCalibrationBeforeSleep()
                 ChargeLimitManager.shared.cancelDischargeBeforeSleep()
                 ChargeLimitManager.shared.cancelManualPauseBeforeSleep()
@@ -1371,6 +1377,7 @@ class BatteryTracker: ObservableObject {
                 // calibration state can be stale for the whole sleep duration otherwise —
                 // re-sync immediately instead of waiting up to 30s for the next heartbeat.
                 guard let self else { return }
+                ChargeLimitManager.shared.resumeTwoModeAfterWake()
                 ChargeLimitManager.shared.evaluate(batteryLevel: self.getBatteryLevel(), isPluggedIn: self.isACPowerConnected(), externalHoldPercent: self.externalHoldPercent)
             }
         }

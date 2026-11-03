@@ -55,6 +55,7 @@ private func usage() {
 
     USAGE
       macwake status                 battery %, power source, charging state
+      macwake method                 show SMC charge-stop method (read-only)
       macwake charging on|off        allow or stop charging
       macwake adapter on|off         power adapter on, or off to discharge on AC
       macwake energy auto|low|high   set the macOS Energy Mode
@@ -92,6 +93,14 @@ case "status":
             print("firmware charge limit: \(available ? "available" : "not available")")
         }
     }
+
+case "method":
+    guard let p = helper() else { exit(1) }
+    let sem = DispatchSemaphore(value: 0)
+    var method = "unreachable"
+    p.chargeControlMethod { value in method = value; sem.signal() }
+    _ = sem.wait(timeout: .now() + 3)
+    print(method)
 
 case "charging" where args.count == 2 && (args[1] == "on" || args[1] == "off"):
     guard let p = helper() else { exit(1) }

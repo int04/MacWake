@@ -115,13 +115,11 @@ final class ChargeLimitManager: ObservableObject {
         didSet {
             UserDefaults.standard.set(isEnabled, forKey: "chargeLimitEnabled")
             if !isEnabled {
-                if dischargeActive { automaticDischargeArmed = false; cancelDischarge() }
-                manualChargePaused = false
-                // A calibration in progress would otherwise be stranded: evaluate() bails
-                // at its `isEnabled` guard, so calibrationActive never clears and even the
-                // timeout backstop stops firing. Cancelling also restores charging.
-                if calibrationActive { cancelCalibration() }
-                else { Task { await self.restoreCharging() } }
+                twoModePhase = .normal
+                twoModeStartedAt = nil
+                twoModeGeneration += 1
+                twoModeError = nil
+                requestTwoModeAction(.charge)
                 if firmwareLimitActive { Task { await self.releaseFirmwareLimit() } }
             }
             // evaluate() returns before reaching the ownership update while disabled, so a
@@ -140,8 +138,33 @@ final class ChargeLimitManager: ObservableObject {
             if clamped != limit { limit = clamped; return }
             UserDefaults.standard.set(limit, forKey: "chargeLimitValue")
             if sailingLower > limit - 5 { sailingLower = limit - 5 }
+            if dischargeTarget >= limit { dischargeTarget = max(5, limit - 5) }
+            adapterRestoredAtMax = false
+            if isEnabled, helperStatus == .ready {
+                evaluate(batteryLevel: twoModeLastBatteryLevel, isPluggedIn: twoModeLastPlugged)
+            }
         }
     }
+
+    // The two charging modes are mutually exclusive. The legacy scheduling, Sailing,
+    // heat-guard, calibration and top-up controls are no longer active controllers.
+    @Published private(set) var twoModePhase: TwoModeChargingRules.Phase = .normal
+    @Published private(set) var twoModeAppliedAction: TwoModeChargingRules.Action?
+    @Published private(set) var twoModeError: String?
+    var canHoldOnAdapterPower: Bool { holdCutsAdapter == false }
+    private var twoModeCycleTarget = 20
+    /// Adapter-cut-only Macs restore AC at Max and do not recut until Max + 5%.
+    /// This is a bounded charge/discharge fallback, not a true charge inhibit.
+    private var adapterRestoredAtMax = false
+    var activeCycleTarget: Int { twoModeCycleTarget }
+    private var twoModeStartedAt: Date?
+    private var twoModeRequestedAction: TwoModeChargingRules.Action?
+    private var twoModeCommandInFlight = false
+    private var twoModeGeneration = 0
+    private var twoModeSuspended = false
+    private var twoModeMonitor: Timer?
+    private var twoModeLastBatteryLevel = 0
+    private var twoModeLastPlugged = false
 
     /// One-shot "charge to 100% this once" override (e.g. before travel). Cleared
     /// automatically when the battery reaches 100% or on cancel; deliberately NOT
@@ -204,7 +227,7 @@ final class ChargeLimitManager: ObservableObject {
     @Published private(set) var dischargeActive = false
     @Published var dischargeTarget: Int {
         didSet {
-            let clamped = min(95, max(dischargeFloor, dischargeTarget))
+            let clamped = min(max(dischargeFloor, limit - 5), max(dischargeFloor, dischargeTarget))
             if clamped != dischargeTarget { dischargeTarget = clamped; return }
             UserDefaults.standard.set(dischargeTarget, forKey: "dischargeTarget")
         }
@@ -597,6 +620,17 @@ final class ChargeLimitManager: ObservableObject {
 
     private init() {
         let d = UserDefaults.standard
+        // One-time transition to exactly two charge workflows. Settings left enabled by
+        // older releases must not resume scheduled charging, Sailing, calibration,
+        // firmware experiments or automatic discharge behind the new two-mode UI.
+        if !d.bool(forKey: "twoModeChargingMigrated") {
+            for key in ["sailingEnabled", "heatGuardEnabled", "scheduledChargeEnabled",
+                        "automaticDischargeEnabled", "useFirmwareLimit"] {
+                d.set(false, forKey: key)
+            }
+            d.set(0, forKey: "calibrationScheduleMode")
+            d.set(true, forKey: "twoModeChargingMigrated")
+        }
         self.isEnabled = d.bool(forKey: "chargeLimitEnabled")
         let savedLimit = d.integer(forKey: "chargeLimitValue")
         let lim = savedLimit == 0 ? 80 : min(95, max(20, savedLimit))
@@ -612,7 +646,8 @@ final class ChargeLimitManager: ObservableObject {
         let savedSchedule = d.object(forKey: "scheduledChargeMinutes") as? Int
         self.scheduledChargeMinutes = savedSchedule.map { min(1439, max(0, $0)) } ?? 540   // default 09:00
         let savedDischarge = d.object(forKey: "dischargeTarget") as? Int
-        self.dischargeTarget = savedDischarge.map { min(95, max(5, $0)) } ?? 60
+        self.dischargeTarget = savedDischarge.map { TwoModeChargingRules.target($0, maxLimit: lim) }
+            ?? TwoModeChargingRules.target(20, maxLimit: lim)
         self.automaticDischargeEnabled = d.bool(forKey: "automaticDischargeEnabled")
         self.calibrationScheduleMode = min(2, max(0, d.object(forKey: "calibrationScheduleMode") as? Int ?? 1))
         self.calibrationScheduleLastHandled = d.object(forKey: "calibrationScheduleLastHandled") as? Date ?? Date()
@@ -943,353 +978,234 @@ final class ChargeLimitManager: ObservableObject {
 
     // MARK: - Control loop
 
-    /// Called by BatteryTracker whenever battery state updates.
-    ///
-    /// Note: when we hold the limit by cutting the adapter (CHIE=8), macOS reports
-    /// "battery power" even though the charger is physically attached. We must NOT
-    /// treat that self-induced state as a real unplug, or we'd flip the adapter back
-    /// on immediately and oscillate. `lastAdapterEnabled == false` means we are the
-    /// ones holding, so the charger is still physically connected.
+    /// A single owner for both charge workflows. No legacy mode can apply an SMC
+    /// charge command from this loop.
     func evaluate(batteryLevel: Int, isPluggedIn: Bool, externalHoldPercent: Int? = nil) {
+        twoModeLastBatteryLevel = batteryLevel
+        twoModeLastPlugged = isPluggedIn
+        guard !twoModeSuspended else { return }
+
         guard helperStatus == .ready, isEnabled else {
-            if calibrationActive { abortCalibration(reason: .helperUnreachable) }
-            if dischargeActive { automaticDischargeArmed = false; cancelDischarge() }
-            if lastAdapterEnabled == false { Task { await restoreCharging() } }
-            if firmwareLimitActive { Task { await releaseFirmwareLimit() } }
+            if twoModePhase != .normal { twoModePhase = .normal }
+            twoModeStartedAt = nil
+            twoModeRequestedAction = .charge
+            if helperStatus == .ready { requestTwoModeAction(.charge) }
             return
         }
 
-        let physicallyPlugged = isPluggedIn || (lastAdapterEnabled == false)
-        guard physicallyPlugged else {
-            if calibrationActive { abortCalibration(reason: .unsafeCondition) }
-            if dischargeActive { automaticDischargeArmed = false; cancelDischarge() }
-            // Genuinely on battery — re-enable so the next real plug-in charges.
-            if lastAdapterEnabled == false { Task { await restoreCharging() } }
+        // CHIE makes macOS report Battery Power even when a cable is inserted.
+        // The successful SMC write is the only evidence that *we* induced that.
+        let plugged = isPluggedIn || lastAdapterEnabled == false
+        guard plugged else {
+            twoModePhase = .normal
+            twoModeStartedAt = nil
+            requestTwoModeAction(.charge)
             return
         }
 
-        // Opt-in automatic discharge uses the same safe adapter-control path as
-        // a manual discharge. Never invent a fresh temperature reading.
-        let sensor = BatteryTracker.sharedForIntents
-        let sampleFresh = sensor?.lastBatteryTemperatureSampleAt.map {
-            Date().timeIntervalSince($0) >= 0 && Date().timeIntervalSince($0) < 120
-        } ?? false
-        let batteryTemp = sampleFresh ? (sensor?.batteryTemperature ?? 0) : 0
-        let unsafeClamshell = clamshellAdapterCutBlocked
-        let scheduledNow = scheduledChargeWindow(batteryLevel: batteryLevel)
-        let conflictingMode = calibrationActive || topUpActive || scheduledNow
-            || manualChargePaused || heatGuardPaused || externalHoldPercent != nil
-        checkScheduledCalibration(
-            batteryLevel: batteryLevel, physicallyPlugged: isPluggedIn,
-            batteryTemperatureC: batteryTemp,
-            lidClosedWithExternalDisplay: unsafeClamshell,
-            conflictingMode: conflictingMode || dischargeActive
-        )
-        if automaticDischargeEnabled, !dischargeActive {
-            if batteryLevel <= limit { automaticDischargeArmed = true }
-            if SmartChargeCycleRules.canStartDischarge(
-                enabled: automaticDischargeEnabled,
-                armed: automaticDischargeArmed,
-                chargeLimit: limit,
-                batteryLevel: batteryLevel,
-                helperReady: helperStatus == .ready,
-                physicallyPlugged: isPluggedIn,
-                batteryTemperatureC: batteryTemp,
-                lidClosedWithExternalDisplay: unsafeClamshell,
-                conflictingMode: conflictingMode || calibrationActive
-            ) {
-                automaticDischargeArmed = false
-                automaticDischargeTarget = limit
-                startDischarge()
-                automaticDischargeInProgress = dischargeActive
-                if !dischargeActive { automaticDischargeTarget = nil }
+        // A clean charge-inhibit key can hold the battery exactly at Max on AC.
+        // CHIE-only hardware can still drain down to Max, then reconnect AC, but
+        // needs a five-point band to avoid flapping; it cannot bypass the battery.
+        guard let cutsAdapter = holdCutsAdapter else { return }
+        if cutsAdapter {
+            if batteryLevel <= limit ||
+                (twoModePhase == .cycleRecharging && batteryLevel >= limit) {
+                adapterRestoredAtMax = true
             }
-        }
-        if dischargeActive {
-            let timedOut = dischargeStartedAt.map {
-                Date().timeIntervalSince($0) > automaticDischargeTimeout
-            } ?? true
-            let unsafe = automaticDischargeInProgress
-                ? SmartChargeCycleRules.mustStopDischarge(
-                    helperReady: helperStatus == .ready,
-                    batteryTemperatureC: batteryTemp,
-                    lidClosedWithExternalDisplay: unsafeClamshell,
-                    conflictingMode: conflictingMode
-                  )
-                : unsafeClamshell || batteryTemp >= SmartChargeCycleRules.maximumBatteryTemperatureC
-            if timedOut || unsafe {
-                automaticDischargeArmed = false
-                cancelDischarge()
-                return
+            if twoModePhase == .normal && batteryLevel >= min(100, limit + 5) {
+                adapterRestoredAtMax = false
             }
         }
 
-        // Manual hold overrides firmware control until the recharge floor is reached.
-        // Never keep the battery blocked below that floor: release BOTH SMC blocks.
-        if manualChargePaused {
-            let lower = sailingEnabled ? sailingLower : limit - hysteresis
-            if batteryLevel <= lower {
-                manualChargePaused = false
-                Task { await restoreCharging() }
-            } else {
-                if firmwareLimitActive {
-                    Task {
-                        await releaseFirmwareLimit()
-                        await applyChargingAllowed(false)
-                    }
-                } else if lastAdapterEnabled != false {
-                    Task { await applyChargingAllowed(false) }
-                }
-            }
-            return
+        if let started = twoModeStartedAt, twoModePhase != .normal,
+           Date().timeIntervalSince(started) > 18 * 3600 {
+            twoModePhase = .normal
+            twoModeStartedAt = nil
+            twoModeError = String(localized: "TWO_MODE_TIMEOUT")
         }
 
-        // The firmware limit, when engaged, is the whole standing limit: nothing below it
-        // should also cut the adapter. Any mode that needs the battery to move past the limit
-        // releases it first and carries on with the paths below.
-        if manageFirmwareLimit(batteryLevel: batteryLevel, externalHoldPercent: externalHoldPercent) { return }
-
-        // Deep calibration takes priority: drain to ~15%, charge to 100%, hold 1 hour.
-        // Manual discharge outranks everything below: the user asked for a specific level
-        // right now, so neither the standing limit nor Sailing Mode should fight it.
-        if dischargeActive {
-            if batteryLevel <= currentDischargeTarget {
-                finishDischarge(reachedTarget: true)
-            } else if lastAdapterEnabled != false {
-                requestActiveDischarge()
-            }
-            return
+        let decision = cutsAdapter
+            ? TwoModeChargingRules.decideAdapterCutFallback(
+                phase: twoModePhase, batteryLevel: batteryLevel, maxLimit: limit,
+                cycleTarget: twoModeCycleTarget, adapterRestoredAtMax: adapterRestoredAtMax
+              )
+            : TwoModeChargingRules.decide(
+                phase: twoModePhase, batteryLevel: batteryLevel, maxLimit: limit,
+                cycleTarget: twoModeCycleTarget
+              )
+        if decision.phase != twoModePhase {
+            twoModePhase = decision.phase
+            if decision.phase == .normal { twoModeStartedAt = nil }
         }
 
-        if calibrationActive {
-            if batteryTemp >= SmartChargeCycleRules.maximumBatteryTemperatureC
-                || (calibrationFullCycle && (batteryTemp < SmartChargeCycleRules.minimumValidBatteryTemperatureC
-                                            || unsafeClamshell)) {
-                abortCalibration(reason: .unsafeCondition)
-                return
-            }
-            if let started = calibrationStartedAt,
-               Date().timeIntervalSince(started) >
-                    (calibrationFullCycle ? fullCalibrationMaxDuration : calibrationMaxDuration) {
-                abortCalibration(reason: .timeout)
-                return
-            }
-            switch calibrationPhase {
-            case .precharge:
-                if batteryLevel >= 100 {
-                    calibrationPhase = .discharge
-                    requestCalibrationDischarge()
-                } else if lastAdapterEnabled != true {
-                    Task { await restoreCharging() }
-                }
-                return
-            case .discharge:
-                if CalibrationRecovery.shouldRestoreImmediately(
-                    batteryLevel: batteryLevel,
-                    dischargeFloor: calibrationDischargeFloor
-                ) {
-                    // Restore power in THIS evaluation. Only flipping the phase here left
-                    // the adapter cut until the next 30-second tick, and the battery kept
-                    // draining through that window — reported reaching 8–9% on a 15% floor.
-                    calibrationGeneration += 1
-                    calibrationDischargeInFlight = false
-                    calibrationPhase = .charge
-                    Task { await restoreCharging() }
-                } else if CalibrationRecovery.shouldForceDischarge(
-                    batteryLevel: batteryLevel,
-                    dischargeFloor: calibrationDischargeFloor,
-                    adapterEnabled: lastAdapterEnabled
-                ) {
-                    requestCalibrationDischarge()
-                }
-                return
-            case .charge:
-                if batteryLevel >= 100 {
-                    calibrationPhase = .hold
-                    calibrationHoldStart = Date()
-                } else if lastAdapterEnabled != true {
-                    // The discharge phase always cuts power via the adapter key
-                    // (forceDischarge/CHIE), regardless of this chip's normal charge-stop
-                    // method. applyChargingAllowed(true) only clears that normal method
-                    // (e.g. CHTE on M1-M3) and would leave CHIE held off — the battery
-                    // would never actually charge back up. restoreCharging() clears both.
-                    Task { await restoreCharging() }
-                }
-                return
-            case .hold:
-                if let s = calibrationHoldStart, Date().timeIntervalSince(s) >= calibrationHoldSeconds {
-                    if calibrationFullCycle {
-                        calibrationPhase = .returnToLimit
-                        requestCalibrationDischarge()
-                        return
-                    }
-                    finishCalibration()   // fall through to normal limiting
+        var action = decision.action
+        if action == .discharge {
+            let sensor = BatteryTracker.sharedForIntents
+            let sampleFresh = sensor?.lastBatteryTemperatureSampleAt.map {
+                Date().timeIntervalSince($0) >= 0 && Date().timeIntervalSince($0) < 120
+            } ?? false
+            let temperature = sampleFresh ? (sensor?.batteryTemperature ?? 0) : 0
+            let safe = sampleFresh &&
+                temperature >= SmartChargeCycleRules.minimumValidBatteryTemperatureC &&
+                temperature < SmartChargeCycleRules.maximumBatteryTemperatureC &&
+                !clamshellAdapterCutBlocked
+
+            if !safe {
+                // The regular mode may safely inhibit charge while waiting for a valid
+                // temperature reading. The explicit cycle instead stops if unsafe.
+                if twoModePhase != .normal {
+                    twoModePhase = .normal
+                    twoModeStartedAt = nil
+                    action = batteryLevel >= limit && !cutsAdapter ? .holdOnAC : .charge
                 } else {
-                    if lastAdapterEnabled != true { Task { await restoreCharging() } }
-                    return
+                    action = cutsAdapter ? .charge : .holdOnAC
                 }
-            case .returnToLimit:
-                if batteryLevel <= limit {
-                    finishCalibration()
-                    Task { await restoreCharging() }
-                } else if lastAdapterEnabled != false {
-                    requestCalibrationDischarge()
-                }
-                return
-            }
-        }
-
-        // Heat Guard outranks Top Up and normal limiting (never outranks calibration —
-        // heatGuardCheck skips while calibrating so a hot charge phase can't stall it
-        // forever; the calibration timeout still applies).
-        let lower = sailingEnabled ? sailingLower : (limit - hysteresis)
-
-        if heatGuardPaused {
-            // Where the SMC has no clean charge-inhibit key, "stop charging" cuts adapter
-            // input and the battery genuinely drains. Heat Guard therefore needs a floor:
-            // without one a hot battery kept discharging until it cooled, with no lower
-            // bound at all — reported dropping to 73% under an 80% limit. A warm battery is
-            // a smaller problem than an unbounded discharge, so at the floor we let it
-            // charge again and leave Heat Guard to re-pause once it has room.
-            if ChargeHoldRules.heatGuardShouldRestore(batteryLevel: batteryLevel, lowerBound: lower) {
-                if lastAdapterEnabled != true { Task { await restoreCharging() } }
-            } else if lastAdapterEnabled != false {
-                Task { await applyChargingAllowed(false) }
-            }
-            return
-        }
-
-        // Scheduled full charge ("ready by 09:00"): inside the pre-target window, charge
-        // to 100% like a Top Up; outside it, fall through to normal limiting.
-        let inScheduledWindow = scheduledChargeWindow(batteryLevel: batteryLevel)
-        if scheduledChargeActive != inScheduledWindow { scheduledChargeActive = inScheduledWindow }
-        if inScheduledWindow {
-            if !scheduledChargeAnnounced, batteryLevel < 100 {
-                scheduledChargeAnnounced = true
-                DynamicIslandManager.shared.trigger(.alert(
-                    title: String(localized: "Scheduled Charge"),
-                    message: String(localized: "Charging to 100% for your scheduled time."),
-                    isWarning: false
-                ))
-            }
-            if batteryLevel < 100, lastAdapterEnabled != true {
-                Task { await restoreCharging() }
-            }
-            return
-        } else {
-            scheduledChargeAnnounced = false
-        }
-
-        // One-shot Top Up: charge past the limit to 100% this once (e.g. before travel),
-        // then automatically resume normal limiting. Not persisted — a relaunch clears it.
-        if topUpActive {
-            if batteryLevel >= 100 {
-                topUpActive = false
-                DynamicIslandManager.shared.trigger(.alert(
-                    title: String(localized: "Fully Charged"),
-                    message: String(localized: "Top Up complete — the charge limit is back on."),
-                    isWarning: false
-                ))
-                // fall through to normal limiting below
+                twoModeError = String(localized: "TWO_MODE_DISCHARGE_PAUSED")
             } else {
-                if lastAdapterEnabled != true { Task { await restoreCharging() } }
-                return
+                twoModeError = nil
+            }
+        } else if twoModeError == String(localized: "TWO_MODE_DISCHARGE_PAUSED") {
+            twoModeError = nil
+        }
+
+        requestTwoModeAction(action)
+    }
+
+    func startSpecialCycle(batteryLevel: Int, isPluggedIn: Bool) {
+        guard isEnabled, helperStatus == .ready, holdCutsAdapter != nil,
+              twoModePhase == .normal, (isPluggedIn || lastAdapterEnabled == false) else { return }
+        twoModeCycleTarget = TwoModeChargingRules.target(dischargeTarget, maxLimit: limit)
+        twoModeStartedAt = Date()
+        twoModeError = nil
+        twoModePhase = batteryLevel <= twoModeCycleTarget ? .cycleRecharging : .cycleDischarging
+        evaluate(batteryLevel: batteryLevel, isPluggedIn: isPluggedIn)
+    }
+
+    func stopSpecialCycle() {
+        guard twoModePhase != .normal else { return }
+        twoModePhase = .normal
+        twoModeStartedAt = nil
+        // In-flight writes are serialized; a late discharge reply is unwound before
+        // the normal mode is allowed to take ownership again.
+        twoModeGeneration += 1
+        twoModeError = nil
+        evaluate(batteryLevel: twoModeLastBatteryLevel, isPluggedIn: twoModeLastPlugged)
+    }
+
+    /// Called synchronously from NSWorkspace.willSleep. Never leave a force-discharge
+    /// request active while the app is suspended and cannot check the discharge floor.
+    func prepareTwoModeForSleep() {
+        twoModeSuspended = true
+        twoModeGeneration += 1
+        twoModeRequestedAction = nil
+        twoModeMonitor?.invalidate()
+        twoModeMonitor = nil
+        twoModePhase = .normal
+        twoModeStartedAt = nil
+        if twoModeAppliedAction == .discharge || twoModeCommandInFlight {
+            restoreChargingSynchronously()
+            twoModeAppliedAction = nil
+        }
+    }
+
+    func resumeTwoModeAfterWake() {
+        twoModeSuspended = false
+        twoModeGeneration += 1
+        twoModeAppliedAction = nil  // SMC state can be reset across sleep
+    }
+
+    private func requestTwoModeAction(_ action: TwoModeChargingRules.Action) {
+        if twoModeAppliedAction == action, !twoModeCommandInFlight { return }
+        twoModeRequestedAction = action
+        guard !twoModeCommandInFlight else { return }
+        twoModeCommandInFlight = true
+        Task { await runTwoModeCommands() }
+    }
+
+    /// One XPC writer at a time. The latest requested state wins, including Stop.
+    /// A late response from an earlier generation is always followed by a restore.
+    private func runTwoModeCommands() async {
+        while let action = twoModeRequestedAction {
+            twoModeRequestedAction = nil
+            if action == twoModeAppliedAction { continue }
+            let generation = twoModeGeneration
+            let ok = await applyTwoModeAction(action)
+            if generation != twoModeGeneration {
+                _ = await restoreCharging()
+                twoModeAppliedAction = nil
+                continue
+            }
+            if ok {
+                twoModeAppliedAction = action
+                if twoModeError == String(localized: "TWO_MODE_COMMAND_FAILED") {
+                    twoModeError = nil
+                }
+            } else {
+                twoModeAppliedAction = nil
+                twoModeError = String(localized: "TWO_MODE_COMMAND_FAILED")
+                _ = await restoreCharging()
             }
         }
+        twoModeCommandInFlight = false
+        updateTwoModeMonitor()
+    }
 
-        // On adapter-cut-only hardware, the standing limit needs separate authorization to
-        // actually discharge — declining it must not silently disable protection or, worse,
-        // leave the UI claiming a limit is enforced when nothing can enforce it. There's
-        // nothing to yield to here either: MacWake was never going to enforce, so ownership
-        // is left alone rather than manufacturing a state transition that didn't happen.
-        guard ChargeLimitAuthorization.standingLimitMayEnforce(
-            holdCutsAdapter: holdCutsAdapter, allowActiveDischarge: allowActiveDischarge
-        ) else {
-            if lastAdapterEnabled == false { Task { await restoreCharging() } }
-            return
-        }
-
-        // Yield runtime enforcement to a confirmed external hold rather than fight it for
-        // the same SMC key — the user's limit/authorization stays configured, only the
-        // active-right-now decision moves. Update ownership before anything else below can
-        // return early, so a transition is never skipped by a return higher up this tick.
-        if externalHoldPercent != nil { consecutiveClearHoldSamples = 0 }
-        else { consecutiveClearHoldSamples += 1 }
-        ownership = ChargeControlOwnership.next(
-            current: ownership,
-            externalHoldPercent: externalHoldPercent,
-            consecutiveClearSamples: consecutiveClearHoldSamples
-        )
-
-        if case .yielded = ownership {
-            // Release MacWake's own prior cut exactly once on the way in (and retry if that
-            // write fails), then touch nothing else — repeatedly re-asserting "charging
-            // allowed" every tick would itself be a second controller fighting the first,
-            // just in the opposite direction.
-            if lastAdapterEnabled == false { Task { await restoreCharging() } }
-            return
-        }
-        // Otherwise `.enforcing` (freshly resumed or unchanged): fall through to normal
-        // limiting below on a fresh read of the current level and band.
-
-        // Lid closed with a display attached: the adapter cut can drop that display, so the
-        // standing limit steps back — power is restored if we had cut it — until the lid opens
-        // or the display goes. Explicit actions (calibration, manual discharge) and Heat Guard
-        // are the user's or a safety's call and are handled above, untouched.
-        if holdCutsAdapter != false {
-            let suppress = ClamshellGuard.shouldSuppressAdapterCut(
-                lidClosed: LidAndDisplay.lidIsClosed(),
-                externalDisplayAttached: LidAndDisplay.externalDisplayAttached(),
-                allowOverride: allowCutInClamshell
-            )
-            if clamshellHoldSuppressed != suppress { clamshellHoldSuppressed = suppress }
-            if suppress {
-                limitReachedAt = nil
-                if lastAdapterEnabled == false { Task { await restoreCharging() } }
-                return
+    private func applyTwoModeAction(_ action: TwoModeChargingRules.Action) async -> Bool {
+        // Clear both CHIE discharge and CHTE inhibit before switching modes.
+        guard await restoreCharging() else { return false }
+        switch action {
+        case .charge:
+            return true
+        case .discharge:
+            return await forceDischarge(true)
+        case .holdOnAC:
+            guard holdCutsAdapter == false, let proxy = remoteProxy() else { return false }
+            let applied = await xpcBool { reply in
+                proxy.setAdapterEnabled(false, reply: reply)
             }
-        } else if clamshellHoldSuppressed {
-            clamshellHoldSuppressed = false
+            guard applied else { return false }
+            // Unlike xpcBool, a timeout must NOT be mistaken for a readback of false.
+            // A missing helper reply is not evidence that charge inhibition succeeded.
+            guard let chargingAllowed = await readChargingAllowed(proxy),
+                  !chargingAllowed else { return false }
+            lastAdapterEnabled = false
+            lastToggleAt = Date()
+            return true
         }
+    }
 
-        let shouldChargeAllowed: Bool
-        if batteryLevel >= limit {
-            // On adapter-cut-only hardware, starting our own cut the instant the level
-            // crosses the ceiling wins the race against native-hold detection by
-            // construction — that detector needs several samples to confirm (checked every
-            // tick, above, before this point is ever reached), and none of those samples can
-            // land once MacWake's own cut is live. Give it its window first; only fall back
-            // to enforcing here if nothing confirms in time.
-            if lastAdapterEnabled != false, !sailingEnabled, holdCutsAdapter != false {
-                let reachedAt = limitReachedAt ?? Date()
-                limitReachedAt = reachedAt
-                guard ChargeControlOwnership.mayEnforceLimitNow(
-                    sinceLimitFirstReached: Date().timeIntervalSince(reachedAt)
-                ) else { return }
+    private func readChargingAllowed(_ proxy: MacWakeHelperProtocol) async -> Bool? {
+        await withCheckedContinuation { (cont: CheckedContinuation<Bool?, Never>) in
+            let lock = NSLock()
+            var completed = false
+            func finish(_ value: Bool?) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !completed else { return }
+                completed = true
+                cont.resume(returning: value)
             }
-            shouldChargeAllowed = false                       // at/over ceiling → stop
-        } else if batteryLevel <= lower {
-            limitReachedAt = nil
-            shouldChargeAllowed = true                        // dropped below band → resume
+            proxy.getAdapterEnabled { finish($0) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { finish(nil) }
+        }
+    }
+
+    /// Poll more frequently than the 30-second heartbeat when force-discharging.
+    /// This matters particularly for a special target as low as 5%.
+    private func updateTwoModeMonitor() {
+        if twoModeAppliedAction == .discharge, !twoModeSuspended {
+            guard twoModeMonitor == nil else { return }
+            twoModeMonitor = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, let tracker = BatteryTracker.sharedForIntents else { return }
+                    let sample = tracker.chargeControlSample()
+                    self.evaluate(batteryLevel: sample.level, isPluggedIn: sample.plugged)
+                }
+            }
         } else {
-            limitReachedAt = nil
-            return                                            // inside band → hold / drift
+            twoModeMonitor?.invalidate()
+            twoModeMonitor = nil
         }
-
-        guard lastAdapterEnabled != shouldChargeAllowed else { return }
-
-        // Hard backstop against flapping — but only in the direction that stops charging.
-        // Rate-limiting a *restore* leaves the Mac draining on AC for another window, which
-        // is how the drop overshot the lower bound. Same mistake the calibration floor made.
-        if ChargeHoldRules.toggleIsRateLimited(
-            chargingAllowed: shouldChargeAllowed,
-            sinceLastToggle: lastToggleAt.map { Date().timeIntervalSince($0) },
-            minimumInterval: minToggleInterval
-        ) {
-            return
-        }
-
-        Task { await applyChargingAllowed(shouldChargeAllowed) }
     }
 
     // MARK: - Firmware limit

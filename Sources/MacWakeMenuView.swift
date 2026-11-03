@@ -943,10 +943,6 @@ struct MacWakeMenuView: View {
             VStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 7) { chargeLimitSection }
                 VStack(alignment: .leading, spacing: 7) { dischargeSection }
-                VStack(alignment: .leading, spacing: 7) { EnergyModeSection() }
-                if let firmware = tracker.magSafeCableFirmware {
-                    magSafeCableSection(firmware: firmware)
-                }
             }
             #else
             EmptyView()
@@ -1015,6 +1011,10 @@ struct MacWakeMenuView: View {
                     toggleRow("sparkles", .purple, "Enable Animations", $tracker.enableAnimations, subtitle: "ANIMATIONS_HELP")
                 }
                 #if !APPSTORE
+                VStack(alignment: .leading, spacing: 7) { EnergyModeSection() }
+                if let firmware = tracker.magSafeCableFirmware {
+                    magSafeCableSection(firmware: firmware)
+                }
                 VStack(alignment: .leading, spacing: 7) { cliSection }
                 VStack(alignment: .leading, spacing: 7) { CleaningModeSection() }
                 #endif
@@ -1137,98 +1137,89 @@ struct MacWakeMenuView: View {
     }
     #endif
 
-    private var calibrationPhaseText: String {
-        switch chargeLimit.calibrationPhase {
-        case .precharge: return String(localized: "CALIBRATION_PRECHARGE_STATUS")
-        case .returnToLimit: return String(localized: "CALIBRATION_RETURN_STATUS")
-        case .discharge: return String(localized: "Calibrating — discharging to 15%…")
-        case .charge:    return String(localized: "Calibrating — charging to 100%…")
-        case .hold:      return String(localized: "Calibrating — holding at 100%…")
-        }
-    }
-
-    /// Manual discharge. The charge limit can only stop charging, so a Mac left plugged in
-    /// at a high level has no way down without unplugging — this drains it to a target.
+    /// The only override of the ordinary charge-limit workflow:
+    /// discharge to Target, then recharge to Max, with an immediate Stop.
     @ViewBuilder
     private var dischargeSection: some View {
-        if chargeLimit.helperStatus == .ready {
-            sectionLabel("Discharge", icon: "battery.25percent")
+        if chargeLimit.helperStatus == .ready, chargeLimit.isEnabled {
+            sectionLabel("TWO_MODE_SPECIAL_TITLE", icon: "battery.25percent")
             settingsCard {
                 HStack(spacing: 10) {
-                    iconTile("arrow.triangle.2.circlepath", .green)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Automatic Discharge to Charge Limit").font(.subheadline)
-                        Text("AUTO_DISCHARGE_HELP").font(.system(size: 10))
-                            .foregroundColor(.secondary)
+                    iconTile("arrow.triangle.2.circlepath", .orange)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("TWO_MODE_SPECIAL_TITLE").font(.subheadline)
+                        Text("TWO_MODE_SPECIAL_DESC")
+                            .font(.system(size: 10)).foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
-                    Toggle("", isOn: $chargeLimit.automaticDischargeEnabled)
-                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
-                .padding(.horizontal, 12).padding(.vertical, 8)
+                .padding(.horizontal, 12).padding(.vertical, 9)
+
                 rowDivider()
-                if chargeLimit.dischargeActive {
-                    HStack(spacing: 11) {
-                        iconTile("bolt.slash.fill", .orange)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Discharging").font(.subheadline)
-                            Text(String(format: String(localized: "DISCHARGE_PROGRESS_FMT"),
-                                        tracker.currentBatteryLevel, chargeLimit.currentDischargeTarget))
-                                .font(.system(size: 11)).foregroundColor(.secondary)
+                if chargeLimit.twoModePhase != .normal {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(chargeLimit.twoModePhase == .cycleDischarging
+                                 ? "TWO_MODE_CYCLE_DISCHARGING"
+                                 : "TWO_MODE_CYCLE_RECHARGING")
+                                .font(.subheadline)
+                            Text(String(format: String(localized: "TWO_MODE_CYCLE_PROGRESS"),
+                                        tracker.currentBatteryLevel, chargeLimit.activeCycleTarget,
+                                        chargeLimit.limit))
+                                .font(.system(size: 10)).foregroundColor(.secondary)
                         }
                         Spacer()
-                        Button("Stop") { chargeLimit.cancelDischarge() }
-                            .buttonStyle(.bordered).controlSize(.small)
+                        Button("TWO_MODE_STOP") {
+                            chargeLimit.stopSpecialCycle()
+                        }
+                        .buttonStyle(.borderedProminent).tint(.orange).controlSize(.small)
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 9)
+                    .padding(.horizontal, 12).padding(.vertical, 12)
                 } else {
-                    HStack(spacing: 11) {
-                        iconTile("battery.25percent", .orange)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Discharge to").font(.subheadline)
-                            Text("DISCHARGE_HELP")
-                                .font(.system(size: 11)).foregroundColor(.secondary)
+                    sliderBlock {
+                        HStack {
+                            Text("TWO_MODE_TARGET").font(.caption)
+                            Spacer()
+                            Text("\(TwoModeChargingRules.target(chargeLimit.dischargeTarget, maxLimit: chargeLimit.limit))%")
+                                .font(.caption.bold()).monospacedDigit()
+                        }
+                        Slider(value: Binding(
+                            get: { Double(TwoModeChargingRules.target(chargeLimit.dischargeTarget, maxLimit: chargeLimit.limit)) },
+                            set: { chargeLimit.dischargeTarget = Int($0) }
+                        ), in: 5...Double(max(5, chargeLimit.limit - 5)), step: 5)
+                        .tint(.orange)
+
+                        if chargeLimit.dischargeTarget < 20 {
+                            Label("DISCHARGE_LOW_TARGET_WARNING",
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10)).foregroundColor(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        Spacer(minLength: 8)
-                        Button {
-                            dischargeConfirming = true
-                        } label: {
-                            Text("\(chargeLimit.dischargeTarget)%").monospacedDigit()
-                        }
-                        .buttonStyle(.borderedProminent).controlSize(.small).tint(.orange)
-                        .disabled(tracker.currentBatteryLevel <= chargeLimit.dischargeTarget || dischargeConfirming)
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 9)
-                    // Draining the battery on purpose is consequential enough to ask first (#6).
-                    if dischargeConfirming {
-                        rowDivider()
-                        sliderBlock {
-                            Text(String(format: String(localized: "DISCHARGE_CONFIRM_FMT"), chargeLimit.dischargeTarget))
+
+                        if dischargeConfirming {
+                            Text(String(format: String(localized: "TWO_MODE_CONFIRM"),
+                                        chargeLimit.dischargeTarget, chargeLimit.limit))
                                 .font(.system(size: 10)).foregroundColor(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                             HStack(spacing: 8) {
-                                Button {
+                                Button("TWO_MODE_START") {
                                     dischargeConfirming = false
-                                    chargeLimit.startDischarge()
-                                } label: { Text("Start Discharging").frame(maxWidth: .infinity) }
-                                    .buttonStyle(.borderedProminent).tint(.orange).controlSize(.small)
-                                Button { dischargeConfirming = false } label: { Text("Cancel").frame(maxWidth: .infinity) }
+                                    chargeLimit.startSpecialCycle(
+                                        batteryLevel: tracker.currentBatteryLevel,
+                                        isPluggedIn: tracker.isPluggedIn
+                                    )
+                                }
+                                .buttonStyle(.borderedProminent).tint(.orange).controlSize(.small)
+                                Button("Cancel") { dischargeConfirming = false }
                                     .buttonStyle(.bordered).controlSize(.small)
                             }
-                        }
-                    }
-                    rowDivider()
-                    sliderBlock {
-                        Slider(value: Binding(get: { Double(chargeLimit.dischargeTarget) },
-                                              set: { chargeLimit.dischargeTarget = Int($0) }),
-                               in: 5...95, step: 5).tint(.orange)
-                        if chargeLimit.dischargeTarget < 20 {
-                            Label("DISCHARGE_LOW_TARGET_WARNING", systemImage: "exclamationmark.triangle.fill")
-                                .font(.system(size: 10))
-                                .foregroundColor(.orange)
-                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Button("TWO_MODE_START") { dischargeConfirming = true }
+                                .buttonStyle(.borderedProminent).tint(.orange).controlSize(.small)
+                                .disabled(chargeLimit.holdCutsAdapter == nil ||
+                                          !(tracker.isPluggedIn || chargeLimit.isHoldingChargeOff))
                         }
                     }
                 }
@@ -1365,360 +1356,96 @@ struct MacWakeMenuView: View {
     private var chargeLimitSection: some View {
         switch chargeLimit.helperStatus {
         case .ready:
-            sectionLabel("Charge Limit", icon: "bolt.badge.checkmark")
+            sectionLabel("TWO_MODE_NORMAL_TITLE", icon: "bolt.badge.checkmark")
             settingsCard {
                 HStack(spacing: 11) {
                     iconTile("bolt.badge.automatic", .green)
-                    Text("Limit Charging").font(.subheadline)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("TWO_MODE_NORMAL_TITLE").font(.subheadline)
+                        Text("TWO_MODE_NORMAL_DESC")
+                            .font(.system(size: 10)).foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     Spacer()
-                    Toggle("", isOn: $chargeLimit.isEnabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    Toggle("", isOn: $chargeLimit.isEnabled)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .help("CL_HELP")
-
-                // Makes the handoff visible rather than leaving the user to infer it from a
-                // toggle that looks on but a battery that isn't behaving like it. The
-                // configured limit is preserved and restated here on purpose — yielding
-                // means MacWake stepped back from enforcing it this moment, not that the
-                // setting or the user's authorization was cleared.
-                if case .yielded(let externalPercent, let macWakeLimit) = chargeLimitSource {
-                    rowDivider()
-                    sliderBlock {
-                        HStack(alignment: .top, spacing: 5) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 9)).foregroundColor(.blue)
-                            Text(isConfirmingYieldedResume
-                                 ? String(format: String(localized: "CL_YIELDED_CONFIRMING_FMT"), externalPercent, macWakeLimit)
-                                 : String(format: String(localized: "CL_YIELDED_FMT"), externalPercent, macWakeLimit))
-                                .font(.system(size: 10)).foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-
-                // Configured but declined the only mechanism this hardware has to enforce
-                // it — say so plainly rather than leave a toggle that looks on above a
-                // battery that never moves.
-                if case .notAuthorized(let macWakeLimit) = chargeLimitSource {
-                    rowDivider()
-                    sliderBlock {
-                        HStack(alignment: .top, spacing: 5) {
-                            Image(systemName: "pause.circle").font(.system(size: 9)).foregroundColor(.secondary)
-                            Text(String(format: String(localized: "CL_NOT_AUTHORIZED_FMT"), macWakeLimit))
-                                .font(.system(size: 10)).foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-
+                .padding(.horizontal, 12).padding(.vertical, 10)
                 if chargeLimit.isEnabled {
-                    rowDivider()
-                    HStack(spacing: 10) {
-                        iconTile("bolt.slash.fill", chargeLimit.manualChargePaused ? .orange : .secondary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(chargeLimit.manualChargePaused ? "Charging Paused" : "Stop Charging Now")
-                                .font(.subheadline)
-                            Text(chargeLimit.manualChargePaused
-                                 ? String(format: String(localized: "MANUAL_RESUME_AT_FMT"), chargeLimit.sailingEnabled ? chargeLimit.sailingLower : chargeLimit.limit - 5)
-                                 : "Pause charging now; the charge limit will resume it automatically.")
-                                .font(.system(size: 10)).foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        Button(chargeLimit.manualChargePaused ? "Resume" : "Stop") {
-                            if chargeLimit.manualChargePaused {
-                                chargeLimit.cancelManualChargePause()
-                            } else {
-                                chargeLimit.stopChargingNow(batteryLevel: tracker.currentBatteryLevel)
-                            }
-                        }
-                        .buttonStyle(.borderedProminent).controlSize(.small)
-                        .disabled(!chargeLimit.manualChargePaused &&
-                                  tracker.currentBatteryLevel <= (chargeLimit.sailingEnabled ? chargeLimit.sailingLower : chargeLimit.limit - 5))
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 8)
                     rowDivider()
                     sliderBlock {
                         HStack {
-                            Text("Stop at").font(.caption).foregroundColor(.secondary)
+                            Text("TWO_MODE_MAX").font(.caption).foregroundColor(.secondary)
                             Spacer()
-                            Text("\(chargeLimit.limit)%").font(.caption.bold()).foregroundColor(.green)
+                            Text("\(chargeLimit.limit)%").font(.caption.bold())
+                                .foregroundColor(.green).monospacedDigit()
                         }
-                        Slider(value: Binding(get: { Double(chargeLimit.limit) }, set: { chargeLimit.limit = Int($0) }), in: 20...95, step: 5).tint(.green)
-                        // One-tap presets for the common limits.
+                        Slider(value: Binding(get: { Double(chargeLimit.limit) },
+                                              set: { chargeLimit.limit = Int($0) }),
+                               in: 20...95, step: 5).tint(.green)
                         HStack(spacing: 6) {
-                            ForEach([60, 70, 80, 90], id: \.self) { preset in
-                                Button(action: { chargeLimit.limit = preset }) {
-                                    Text("\(preset)%")
-                                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 4)
-                                        .background(chargeLimit.limit == preset ? Color.green : Color.primary.opacity(0.07))
-                                        .foregroundColor(chargeLimit.limit == preset ? .white : .primary)
-                                        .cornerRadius(6)
-                                }
-                                .buttonStyle(.plain)
+                            ForEach([30, 50, 70, 90], id: \.self) { preset in
+                                Button("\(preset)%") { chargeLimit.limit = preset }
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .buttonStyle(.bordered)
+                                    .tint(chargeLimit.limit == preset ? .green : .secondary)
                             }
                         }
-                        .padding(.top, 2)
-                        Text(String(format: String(localized: "CL_HOLD_FMT"), chargeLimit.limit))
-                            .font(.system(size: 10)).foregroundColor(.secondary)
-                        // Two mechanisms feel very different, so name the one this Mac uses:
-                        // inhibiting charge keeps it on adapter power, whereas cutting
-                        // adapter input means the battery really drains down to the limit.
-                        if chargeLimit.firmwareLimitSupported == true {
-                            HStack(spacing: 8) {
-                                Toggle(isOn: $chargeLimit.useFirmwareLimit) {
-                                    Text("CL_USE_FIRMWARE").font(.system(size: 10))
-                                }
-                                .toggleStyle(.switch).controlSize(.mini)
+                        .padding(.top, 3)
+                    }
+                    rowDivider()
+                    sliderBlock {
+                        if chargeLimit.holdCutsAdapter == nil {
+                            Label("TWO_MODE_CHECKING", systemImage: "hourglass")
+                                .font(.system(size: 11)).foregroundColor(.secondary)
+                        } else if chargeLimit.twoModePhase != .normal {
+                            Label("TWO_MODE_NORMAL_SUSPENDED", systemImage: "pause.circle")
+                                .font(.system(size: 11)).foregroundColor(.orange)
+                        } else if !(tracker.isPluggedIn || chargeLimit.isHoldingChargeOff) {
+                            Label("TWO_MODE_NEEDS_AC", systemImage: "powerplug")
+                                .font(.system(size: 11)).foregroundColor(.secondary)
+                        } else {
+                            switch chargeLimit.twoModeAppliedAction {
+                            case .holdOnAC:
+                                Label("TWO_MODE_HOLDING", systemImage: "powerplug.fill")
+                                    .font(.system(size: 11)).foregroundColor(.green)
+                            case .discharge:
+                                Label("TWO_MODE_DRAINING", systemImage: "battery.50")
+                                    .font(.system(size: 11)).foregroundColor(.orange)
+                            case .charge:
+                                Label(chargeLimit.holdCutsAdapter == true &&
+                                      tracker.currentBatteryLevel >= chargeLimit.limit
+                                      ? "TWO_MODE_AC_RESTORED" : "TWO_MODE_CHARGING",
+                                      systemImage: "bolt.fill")
+                                    .font(.system(size: 11)).foregroundColor(.green)
+                            case nil:
+                                Label("TWO_MODE_SWITCHING", systemImage: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 11)).foregroundColor(.secondary)
                             }
-                            .padding(.top, 4)
-                            Text(String(localized: chargeLimit.firmwareLimitFailed ? "CL_FIRMWARE_FAILED" : "CL_USE_FIRMWARE_NOTE"))
-                                .font(.system(size: 10))
-                                .foregroundColor(chargeLimit.firmwareLimitFailed ? .orange : .secondary)
+                        }
+                        if chargeLimit.holdCutsAdapter == true {
+                            Label(String(format: String(localized: "TWO_MODE_ADAPTER_FALLBACK"),
+                                         chargeLimit.limit, min(100, chargeLimit.limit + 5)),
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10)).foregroundColor(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        if let cutsAdapter = chargeLimit.holdCutsAdapterNow {
-                            HStack(alignment: .top, spacing: 5) {
-                                Image(systemName: cutsAdapter ? "battery.50" : "powerplug.fill")
-                                    .font(.system(size: 9))
-                                    .foregroundColor(cutsAdapter ? .orange : .green)
-                                Text(String(localized: cutsAdapter ? "CL_HOLD_DISCHARGES"
-                                            : (chargeLimit.firmwareLimitActive ? "CL_HOLD_FIRMWARE" : "CL_HOLD_ON_POWER")))
-                                    .font(.system(size: 10)).foregroundColor(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .padding(.top, 2)
-
-                            // Only this hardware needs the question asked at all — a clean
-                            // inhibit key never discharges to hold, so there's nothing here
-                            // to authorize on M1–M3. Persistent rather than one-shot, and
-                            // separate from Limit Charging itself, per the product direction
-                            // in #17: declining it must not silently disable the limit or
-                            // leave the UI claiming it's enforced.
-                            if cutsAdapter {
-                                HStack(spacing: 8) {
-                                    Toggle(isOn: $chargeLimit.allowActiveDischarge) {
-                                        Text("CL_ALLOW_DISCHARGE").font(.system(size: 10))
-                                    }
-                                    .toggleStyle(.switch).controlSize(.mini)
-                                }
-                                .padding(.top, 4)
-
-                                HStack(spacing: 8) {
-                                    Toggle(isOn: $chargeLimit.allowCutInClamshell) {
-                                        Text("CL_ALLOW_CLAMSHELL_CUT").font(.system(size: 10))
-                                    }
-                                    .toggleStyle(.switch).controlSize(.mini)
-                                }
-                                if chargeLimit.clamshellHoldSuppressed {
-                                    VStack(alignment: .leading, spacing: 7) {
-                                        Label("CL_LIMIT_PAUSED_CLAMSHELL", systemImage: "exclamationmark.triangle.fill")
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .foregroundColor(.orange)
-                                        Text("CL_CLAMSHELL_SUPPRESSED")
-                                            .font(.system(size: 10)).foregroundColor(.secondary)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                        Text("CL_CLAMSHELL_ACTION_HINT")
-                                            .font(.system(size: 10, weight: .medium)).foregroundColor(.orange)
-                                    }
-                                    .padding(9)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(Color.orange.opacity(0.08))
-                                    .cornerRadius(8)
-                                }
-
-                                // Upgraded users had this switch turned on for them without
-                                // asking, so say so once — never shown on a fresh install,
-                                // which defaulted off and has nothing to disclose.
-                                if chargeLimit.showMigrationNotice {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text("CL_MIGRATION_NOTICE")
-                                            .font(.system(size: 10)).foregroundColor(.secondary)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                        Button("CL_MIGRATION_DISMISS") { chargeLimit.dismissMigrationNotice() }
-                                            .font(.system(size: 10)).buttonStyle(.link)
-                                    }
-                                    .padding(.top, 4)
-                                }
-                            }
-                        }
-                        HStack(alignment: .top, spacing: 5) {
-                            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9)).foregroundColor(.orange)
-                            Text(String(localized: "CL_OPT_WARNING")).font(.system(size: 10)).foregroundColor(.secondary)
-                        }
-                        .padding(.top, 2)
-                    }
-
-                    rowDivider()
-                    // One-shot full charge (e.g. before travel) — limit resumes at 100%.
-                    sliderBlock {
-                        if chargeLimit.topUpActive {
-                            HStack(spacing: 5) {
-                                ProgressView().controlSize(.mini)
-                                Text(String(format: String(localized: "TOPUP_ACTIVE_FMT"), tracker.currentBatteryLevel))
-                                    .font(.system(size: 10)).foregroundColor(.orange)
-                                Spacer()
-                            }
-                            Button(action: { chargeLimit.topUp(false) }) { Text("Cancel").frame(maxWidth: .infinity) }
-                                .buttonStyle(.bordered).controlSize(.small)
-                        } else {
-                            Button(action: { chargeLimit.topUp(true) }) {
-                                HStack { Image(systemName: "battery.100.bolt"); Text("Charge to 100% Once") }.frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered).controlSize(.small)
-                            .help("TOPUP_HELP")
-                        }
-                    }
-
-                    rowDivider()
-                    HStack(spacing: 11) {
-                        iconTile("alarm.fill", .mint)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Full Charge by Schedule").font(.subheadline)
-                            if chargeLimit.scheduledChargeActive {
-                                Text(String(localized: "Charging for your scheduled time…"))
-                                    .font(.system(size: 9)).foregroundColor(.mint)
-                            }
-                        }
-                        Spacer()
-                        if chargeLimit.scheduledChargeEnabled {
-                            DatePicker("", selection: Binding(
-                                get: {
-                                    Calendar.current.date(bySettingHour: chargeLimit.scheduledChargeMinutes / 60,
-                                                          minute: chargeLimit.scheduledChargeMinutes % 60,
-                                                          second: 0, of: Date()) ?? Date()
-                                },
-                                set: { newDate in
-                                    let c = Calendar.current.dateComponents([.hour, .minute], from: newDate)
-                                    chargeLimit.scheduledChargeMinutes = (c.hour ?? 9) * 60 + (c.minute ?? 0)
-                                }
-                            ), displayedComponents: .hourAndMinute)
-                            .labelsHidden()
-                            .datePickerStyle(.compact)
-                        }
-                        Toggle("", isOn: $chargeLimit.scheduledChargeEnabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .help("SCHEDULE_HELP")
-
-                    rowDivider()
-                    HStack(spacing: 11) {
-                        iconTile("thermometer.sun.fill", .red)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Heat Guard").font(.subheadline)
-                            if chargeLimit.heatGuardPaused {
-                                Text(String(localized: "Paused — battery is hot, charging will resume when it cools."))
-                                    .font(.system(size: 9)).foregroundColor(.orange)
-                            }
-                        }
-                        Spacer()
-                        Toggle("", isOn: $chargeLimit.heatGuardEnabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .help("HEATGUARD_HELP")
-
-                    rowDivider()
-                    HStack(spacing: 11) {
-                        iconTile("sailboat.fill", .blue)
-                        Text("Sailing Mode").font(.subheadline)
-                        Spacer()
-                        Toggle("", isOn: $chargeLimit.sailingEnabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .help("SAILING_HELP")
-                    if chargeLimit.sailingEnabled {
-                        sliderBlock {
-                            HStack {
-                                Text("Recharge at").font(.caption).foregroundColor(.secondary)
-                                Spacer()
-                                Text("\(chargeLimit.sailingLower)%").font(.caption.bold()).foregroundColor(.blue)
-                            }
-                            Slider(value: Binding(get: { Double(chargeLimit.sailingLower) }, set: { chargeLimit.sailingLower = Int($0) }), in: 10...Double(chargeLimit.limit - 5), step: 5).tint(.blue)
-                            Text(String(format: String(localized: "SAILING_DESC_FMT"), chargeLimit.sailingLower, chargeLimit.limit))
-                                .font(.system(size: 10)).foregroundColor(.secondary)
-                        }
-                    }
-
-                    rowDivider()
-                    sliderBlock {
-                        HStack(spacing: 11) {
-                            iconTile("gauge.with.needle", .purple)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("Battery Calibration").font(.subheadline)
-                                Text(String(localized: "CALIBRATION_HELP"))
-                                    .font(.system(size: 10)).foregroundColor(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-
-                        HStack(spacing: 8) {
-                            Text("Calibration Schedule").font(.caption)
-                            Spacer()
-                            Picker("", selection: $chargeLimit.calibrationScheduleMode) {
-                                Text("Calibration Schedule Off").tag(0)
-                                Text("Monthly Reminder").tag(1)
-                                Text("Monthly Automatic Calibration").tag(2)
-                            }
-                            .labelsHidden()
-                            .frame(maxWidth: 190)
-                        }
-                        Text("CALIBRATION_SCHEDULE_HELP")
-                            .font(.system(size: 10)).foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        if chargeLimit.calibrationActive {
-                            HStack(spacing: 5) {
-                                ProgressView().controlSize(.mini)
-                                Text(calibrationPhaseText).font(.system(size: 10)).foregroundColor(.purple)
-                                Spacer()
-                            }
-                            Button(action: { chargeLimit.cancelCalibration() }) { Text("Cancel").frame(maxWidth: .infinity) }
-                                .buttonStyle(.bordered).controlSize(.small)
-                        } else if calibrationConfirming {
-                            HStack(spacing: 8) {
-                                Button {
-                                    calibrationConfirming = false
-                                    chargeLimit.calibrateNow(batteryLevel: tracker.currentBatteryLevel)
-                                } label: { Text("Calibrate Now").frame(maxWidth: .infinity) }
-                                    .buttonStyle(.borderedProminent).tint(.purple).controlSize(.small)
-                                Button { calibrationConfirming = false } label: { Text("Cancel").frame(maxWidth: .infinity) }
-                                    .buttonStyle(.bordered).controlSize(.small)
-                            }
-                        } else {
-                            // Calibration drains through the adapter cut, so it only makes sense
-                            // on the charger — started on battery it would sit idle until the
-                            // eight-hour timeout, silently.
-                            let onCharger = tracker.isPluggedIn || chargeLimit.isHoldingChargeOff
-                            Button(action: { calibrationConfirming = true }) {
-                                HStack { Image(systemName: "gauge.with.needle"); Text("Calibrate Now") }.frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered).controlSize(.small)
-                            .disabled(!onCharger)
-                            if !onCharger {
-                                Text("CALIBRATION_NEEDS_CHARGER")
-                                    .font(.system(size: 10)).foregroundColor(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
+                        if let error = chargeLimit.twoModeError {
+                            Text(error)
+                                .font(.system(size: 10)).foregroundColor(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
-
-                // The only control that can repair a stale daemon used to live in the fan
-                // diagnostics block, so it was invisible on every fanless Mac — exactly the
-                // machines that still need it. It belongs with the helper it repairs.
                 rowDivider()
-                HStack(spacing: 11) {
-                    iconTile("gearshape.arrow.trianglehead.2.clockwise.rotate.90", .gray)
-                    VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 10) {
+                    iconTile("gearshape", .gray)
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("Background Helper").font(.subheadline)
-                        Text(helperVersionLine)
-                            .font(.system(size: 10)).foregroundColor(.secondary)
+                        Text(helperVersionLine).font(.system(size: 10)).foregroundColor(.secondary)
                     }
                     Spacer()
                     Button {
-                        // Each step and its error, on the clipboard: this report was being
-                        // discarded, leaving no way to see why a reload did nothing.
                         Task {
                             await helperReloadCopy.run {
                                 await chargeLimit.forceReloadHelper()
