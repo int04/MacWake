@@ -225,3 +225,34 @@
 
 "TWO_MODE_ADAPTER_FALLBACK" = "This Mac uses adapter cut (CHIE), not true AC bypass: discharge to %d%%, reconnect AC, then allow up to %d%% before cutting again. Battery may recharge during this interval.";
 "TWO_MODE_AC_RESTORED" = "AC power restored. Battery may continue charging.";
+
+"MACINFO_HEADING" = "Mac System Information";
+"MACINFO_SUBTITLE" = "Detailed system information, grouped by category. Open a group to load it, or load all available reports.";
+"MACINFO_SEARCH" = "Search loaded information";
+"MACINFO_LOAD_ALL" = "Load All";
+"MACINFO_REFRESH" = "Refresh";
+"MACINFO_COPY" = "Copy";
+"MACINFO_LOADING_ALL" = "Loading system reports one category at a time…";
+"MACINFO_UPDATED" = "Last updated: %@";
+"MACINFO_PRIVACY" = "Read locally with macOS System Profiler. Reports can include serial numbers, device identifiers and network addresses. Review before sharing copied data.";
+"MACINFO_LOADING" = "Reading macOS system information…";
+"MACINFO_LOAD_FAILED" = "Could not read this category from System Profiler. Try again.";
+"MACINFO_PARSE_FAILED" = "System Profiler returned invalid data. Try refreshing.";
+"MACINFO_RETRY" = "Retry";
+"MACINFO_EMPTY" = "No information reported in this category.";
+"MACINFO_NO_MATCH" = "No matching entries in the loaded information.";
+"MACINFO_TAP_TO_LOAD" = "Expand this group to load details.";
+"MACINFO_OVERVIEW" = "Mac overview & macOS";
+"MACINFO_POWER" = "Battery & power";
+"MACINFO_DISPLAYS" = "Displays & graphics";
+"MACINFO_MEMORY" = "Memory & processing";
+"MACINFO_STORAGE" = "Storage & drives";
+"MACINFO_NETWORK" = "Network & connectivity";
+"MACINFO_PORTS" = "Ports & external devices";
+"MACINFO_MEDIA" = "Audio, cameras & Bluetooth";
+"MACINFO_SECURITY" = "Security & device management";
+"MACINFO_SOFTWARE" = "Apps, extensions & services";
+"MACINFO_FONTS" = "Fonts & frameworks";
+"MACINFO_PRINTERS" = "Printers & optical drives";
+"MACINFO_ACCESSIBILITY" = "Accessibility";
+"MACINFO_DIAGNOSTICS" = "Diagnostics & logs";

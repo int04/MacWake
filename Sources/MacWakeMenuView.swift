@@ -1021,18 +1021,25 @@ struct MacWakeMenuView: View {
             }
 
         case .more:
-            settingsSection("Actions", icon: "ellipsis.circle.fill") {
-                actionRow("sparkles", .pink, "Welcome Tour") { OnboardingManager.shared.show() }
-                rowDivider()
-                actionRow("arrow.clockwise", .orange, "Reset Session") { tracker.resetCurrentSession() }
-                rowDivider()
-                actionRow("square.and.arrow.up", .teal, "Export Battery Data (CSV)") { tracker.exportDataAsCSV() }
-                if !Distribution.isAppStore {
-                    rowDivider()
-                    actionRow("arrow.down.circle.fill", .blue, "Check for Updates") { AppDelegate.shared?.checkForUpdates() }
+            VStack(spacing: 16) {
+                #if !APPSTORE
+                settingsSection("MACINFO_HEADING", icon: "desktopcomputer") {
+                    MacSystemInformationView()
                 }
-                rowDivider()
-                actionRow("power", .red, "Quit MacWake", destructive: true) { NSApplication.shared.terminate(nil) }
+                #endif
+                settingsSection("Actions", icon: "ellipsis.circle.fill") {
+                    actionRow("sparkles", .pink, "Welcome Tour") { OnboardingManager.shared.show() }
+                    rowDivider()
+                    actionRow("arrow.clockwise", .orange, "Reset Session") { tracker.resetCurrentSession() }
+                    rowDivider()
+                    actionRow("square.and.arrow.up", .teal, "Export Battery Data (CSV)") { tracker.exportDataAsCSV() }
+                    if !Distribution.isAppStore {
+                        rowDivider()
+                        actionRow("arrow.down.circle.fill", .blue, "Check for Updates") { AppDelegate.shared?.checkForUpdates() }
+                    }
+                    rowDivider()
+                    actionRow("power", .red, "Quit MacWake", destructive: true) { NSApplication.shared.terminate(nil) }
+                }
             }
         }
     }

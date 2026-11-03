@@ -489,3 +489,34 @@
 
 "TWO_MODE_ADAPTER_FALLBACK" = "Máy dùng cơ chế ngắt adapter (CHIE), không phải dùng AC trực tiếp và bỏ qua pin: xả về %d%%, nối lại AC, rồi có thể sạc đến %d%% trước lần xả tiếp theo.";
 "TWO_MODE_AC_RESTORED" = "Đã kết nối lại nguồn AC. Pin có thể tiếp tục được nạp.";
+
+"MACINFO_HEADING" = "Thông tin máy Mac";
+"MACINFO_SUBTITLE" = "Thông tin hệ thống được phân loại theo nhóm. Mở nhóm để tải chi tiết, hoặc chọn Tải tất cả.";
+"MACINFO_SEARCH" = "Tìm trong thông tin đã tải";
+"MACINFO_LOAD_ALL" = "Tải tất cả";
+"MACINFO_REFRESH" = "Làm mới";
+"MACINFO_COPY" = "Sao chép";
+"MACINFO_LOADING_ALL" = "Đang tải lần lượt các nhóm thông tin hệ thống…";
+"MACINFO_UPDATED" = "Cập nhật lần cuối: %@";
+"MACINFO_PRIVACY" = "Đọc trực tiếp bằng công cụ System Profiler của macOS. Báo cáo có thể chứa số sê-ri, mã thiết bị và địa chỉ mạng. Hãy kiểm tra trước khi chia sẻ dữ liệu đã sao chép.";
+"MACINFO_LOADING" = "Đang đọc thông tin từ macOS…";
+"MACINFO_LOAD_FAILED" = "Không thể đọc nhóm này từ System Profiler. Hãy thử lại.";
+"MACINFO_PARSE_FAILED" = "System Profiler trả về dữ liệu không hợp lệ. Hãy tải lại.";
+"MACINFO_RETRY" = "Thử lại";
+"MACINFO_EMPTY" = "Hệ thống không cung cấp thông tin cho nhóm này.";
+"MACINFO_NO_MATCH" = "Không tìm thấy thông tin trùng khớp trong dữ liệu đã tải.";
+"MACINFO_TAP_TO_LOAD" = "Mở nhóm này để tải thông tin.";
+"MACINFO_OVERVIEW" = "Tổng quan máy Mac & macOS";
+"MACINFO_POWER" = "Pin & nguồn điện";
+"MACINFO_DISPLAYS" = "Màn hình & đồ họa";
+"MACINFO_MEMORY" = "Bộ nhớ & bộ xử lý";
+"MACINFO_STORAGE" = "Ổ đĩa & lưu trữ";
+"MACINFO_NETWORK" = "Mạng & kết nối";
+"MACINFO_PORTS" = "Cổng & thiết bị ngoại vi";
+"MACINFO_MEDIA" = "Âm thanh, camera & Bluetooth";
+"MACINFO_SECURITY" = "Bảo mật & quản lý thiết bị";
+"MACINFO_SOFTWARE" = "Ứng dụng, tiện ích & dịch vụ";
+"MACINFO_FONTS" = "Font chữ & framework";
+"MACINFO_PRINTERS" = "Máy in & ổ đĩa quang";
+"MACINFO_ACCESSIBILITY" = "Trợ năng";
+"MACINFO_DIAGNOSTICS" = "Chẩn đoán & nhật ký";
