@@ -508,3 +508,11 @@
 "FINISH_YELLOW" = "イエロー";
 "FINISH_ORANGE" = "オレンジ";
 "FINISH_PURPLE" = "パープル";
+
+"POWER_FLOW_CHARGING" = "バッテリー充電中";
+"POWER_FLOW_DISCHARGING" = "バッテリー放電中";
+"POWER_FLOW_NOT_CHARGING" = "バッテリーは充電していません";
+"POWER_FLOW_AC_CONNECTED" = "AC電源に接続中";
+"POWER_FLOW_AC_INPUT_FMT" = "AC入力: %.1f W";
+"POWER_FLOW_ADAPTER_RATED_FMT" = "アダプター定格: %d W";
+"POWER_FLOW_BATTERY_WATTS_FMT" = "バッテリー: %+.1f W";

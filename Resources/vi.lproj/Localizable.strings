@@ -487,8 +487,6 @@
 "TWO_MODE_TIMEOUT" = "Chu trình đặc biệt đã quá thời hạn, chuyển về giới hạn sạc thường.";
 "TWO_MODE_COMMAND_FAILED" = "Lệnh điều khiển SMC thất bại. Ứng dụng đã thử khôi phục nguồn.";
 
-"TWO_MODE_ADAPTER_FALLBACK" = "Máy dùng cơ chế ngắt adapter (CHIE), không phải dùng AC trực tiếp và bỏ qua pin: xả về %d%%, nối lại AC, rồi có thể sạc đến %d%% trước lần xả tiếp theo.";
-"TWO_MODE_AC_RESTORED" = "Đã kết nối lại nguồn AC. Pin có thể tiếp tục được nạp.";
 
 "MACINFO_HEADING" = "Thông tin máy Mac";
 "MACINFO_SUBTITLE" = "Thông tin hệ thống được phân loại theo nhóm. Mở nhóm để tải chi tiết, hoặc chọn Tải tất cả.";
@@ -520,3 +518,20 @@
 "MACINFO_PRINTERS" = "Máy in & ổ đĩa quang";
 "MACINFO_ACCESSIBILITY" = "Trợ năng";
 "MACINFO_DIAGNOSTICS" = "Chẩn đoán & nhật ký";
+
+"TWO_MODE_UNSUPPORTED_STRICT" = "Máy này không hỗ trợ giữ pin tại Max trong khi vẫn cấp điện từ sạc. SMC chỉ cho phép ngắt adapter (CHIE), khiến máy hao pin. MacWake đã TẮT giới hạn sạc và khôi phục nguồn adapter. Giá trị Max/Target được lưu lại nhưng firmware này chưa cho phép thực thi.";
+"TWO_MODE_NATIVE_GUIDANCE" = "macOS có Charge Limit gốc từ 80% đến 100%; có thể dừng nạp khi adapter vẫn kết nối, nhưng không giữ được mức 50% tùy chọn và đôi lúc tự hiệu chuẩn đến 100%. Bạn có thể thiết lập trong Cài đặt hệ thống.";
+"TWO_MODE_OPEN_BATTERY_SETTINGS" = "Mở Cài đặt Pin macOS";
+"TWO_MODE_SPECIAL_BLOCKED" = "Không thể bắt đầu chu trình đặc biệt: khi hoàn thành, máy không có cách giữ pin tại Max bằng nguồn adapter mà không nạp tiếp.";
+"TWO_MODE_HOLD_VERIFY_FAILED" = "Không xác minh được việc dừng nạp trong khi vẫn dùng nguồn adapter. MacWake đã khôi phục nguồn và tắt giới hạn sạc để bảo đảm an toàn.";
+"TWO_MODE_MAX_SAVED_NOT_ACTIVE" = "Đã lưu Max, nhưng chưa thực thi khi Giới hạn sạc đang tắt hoặc không được hỗ trợ.";
+"TWO_MODE_POWERUI_BACKEND" = "Đang dùng giới hạn sạc gốc macOS PowerUI (80–95%). Máy vẫn nhận nguồn AC; macOS có thể sai lệch vài phần trăm hoặc tự hiệu chuẩn pin.";
+"TWO_MODE_POWERUI_LOW_UNSUPPORTED" = "PowerUI trên máy chỉ hỗ trợ Max 80–95% trong MacWake. Max thấp hơn vẫn được lưu nhưng chưa thể thực thi; chọn từ 80% để bật giới hạn sạc gốc.";
+
+"POWER_FLOW_CHARGING" = "Pin đang nạp";
+"POWER_FLOW_DISCHARGING" = "Pin đang xả";
+"POWER_FLOW_NOT_CHARGING" = "Pin không nạp";
+"POWER_FLOW_AC_CONNECTED" = "Đã kết nối nguồn AC";
+"POWER_FLOW_AC_INPUT_FMT" = "Công suất nguồn AC: %.1f W";
+"POWER_FLOW_ADAPTER_RATED_FMT" = "Công suất định mức sạc: %d W";
+"POWER_FLOW_BATTERY_WATTS_FMT" = "Công suất pin: %+.1f W";

@@ -34,8 +34,47 @@ class BatteryTracker: ObservableObject {
     /// a growing amount of history.
     private var externalHoldSamples: [ExternalChargeHold.Sample] = []
     @Published var appState: String = "active" // active, screenSleep, systemSleep, charging
+    /// Adapter's advertised maximum, not its current draw.
     @Published var powerAdapterWatts: Int?
+    /// Measured AC input, when trustworthy telemetry is available. Never a
+    /// fallback derived from battery power.
     @Published var dynamicWatts: Double?
+    /// Signed battery power: positive means charging, negative discharging.
+    @Published private(set) var batteryWatts: Double?
+
+    var powerFlowState: PowerFlowReading.State {
+        PowerFlowReading.state(connected: isPluggedIn,
+                               isCharging: isCharging, batteryWatts: batteryWatts)
+    }
+
+    var powerFlowStatus: String {
+        switch powerFlowState {
+        case .charging: return String(localized: "POWER_FLOW_CHARGING")
+        case .discharging: return String(localized: "POWER_FLOW_DISCHARGING")
+        case .notCharging: return String(localized: "POWER_FLOW_NOT_CHARGING")
+        case .onBattery: return String(localized: "On Battery")
+        }
+    }
+
+    var batteryPowerDescription: String? {
+        batteryWatts.map {
+            String(format: String(localized: "POWER_FLOW_BATTERY_WATTS_FMT"), $0)
+        }
+    }
+
+    var adapterPowerDescription: String {
+        guard isPluggedIn else { return String(localized: "SCENE_PORT_UNPLUGGED") }
+        if let measured = dynamicWatts {
+            return String(format: String(localized: "POWER_FLOW_AC_INPUT_FMT"), measured)
+        }
+        return String(localized: "POWER_FLOW_AC_CONNECTED")
+    }
+
+    var adapterRatedPowerDescription: String? {
+        powerAdapterWatts.map {
+            String(format: String(localized: "POWER_FLOW_ADAPTER_RATED_FMT"), $0)
+        }
+    }
     @Published var slowChargingAlert: String?
     @Published var powerAdapterName: String?
     @Published var isOriginalAppleAdapter: Bool = false
@@ -762,8 +801,8 @@ class BatteryTracker: ObservableObject {
     }
 
     /// Fresh IOPS sample for the five-second charge/discharge safety monitor.
-    func chargeControlSample() -> (level: Int, plugged: Bool) {
-        (getBatteryLevel(), isACPowerConnected())
+    func chargeControlSample() -> (level: Int, plugged: Bool, charging: Bool) {
+        (getBatteryLevel(), isACPowerConnected(), getIsCharging())
     }
 
     private func getBatteryLevel() -> Int {
@@ -864,6 +903,7 @@ class BatteryTracker: ObservableObject {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceNameMatching("AppleSmartBattery"))
         guard service != 0 else {
             dynamicWatts = nil
+            batteryWatts = nil
             slowChargingAlert = nil
             return
         }
@@ -903,30 +943,22 @@ class BatteryTracker: ObservableObject {
             
             updateBatteryHealth(from: dict)
             
-            // Calculate dynamic watts whether plugged in or not
-            var calculatedWatts: Double = 0
-            
-            // 1. Try to get total system power in (Adapter draw)
-            if let telemetry = dict["PowerTelemetryData"] as? [String: Any],
-               let systemPowerIn = telemetry["SystemPowerIn"] as? NSNumber {
-                calculatedWatts = systemPowerIn.doubleValue / 1000.0
-            }
-            
-            // 2. If Adapter draw is near 0 (e.g., unplugged, or system cut off adapter power to discharge), 
-            // fallback to battery discharge/charge rate
-            if calculatedWatts < 1.0 {
-                if let amperage = dict["InstantAmperage"] as? NSNumber,
-                   let voltage = dict["Voltage"] as? NSNumber {
-                    let watts = abs(amperage.doubleValue) * voltage.doubleValue / 1000000.0
-                    calculatedWatts = max(calculatedWatts, watts)
-                }
-            }
-            
-            if calculatedWatts > 0 {
-                wattsVal = calculatedWatts
-            }
+            // Keep battery and adapter on independent electrical paths.
+            // A negative InstantAmperage while AC is connected is battery
+            // discharge (e.g. PowerUI's discharge-to-limit), NOT adapter draw.
+            batteryWatts = PowerFlowReading.batteryWatts(
+                amperage: dict["InstantAmperage"] as? NSNumber,
+                voltage: dict["Voltage"] as? NSNumber
+            )
+            let telemetry = dict["PowerTelemetryData"] as? [String: Any]
+            wattsVal = PowerFlowReading.adapterInputWatts(
+                systemPowerInMilliwatts: telemetry?["SystemPowerIn"] as? NSNumber,
+                connected: isPluggedIn
+            )
+        } else {
+            batteryWatts = nil
         }
-        
+
         dynamicWatts = wattsVal
         checkAndRecordHealthHistory()
         checkTemperatureAlert()
@@ -1141,7 +1173,8 @@ class BatteryTracker: ObservableObject {
     }
 
     private func checkSlowCharging() {
-        guard isPluggedIn || isACPowerConnected(),
+        // A limit hold or a deliberate battery discharge is not slow charging.
+        guard isCharging, (isPluggedIn || isACPowerConnected()),
               let watts = powerAdapterWatts,
               let dyn = dynamicWatts,
               currentBatteryLevel < 80 else {
@@ -1541,10 +1574,11 @@ class BatteryTracker: ObservableObject {
     // Manual reset command
     // MARK: - WidgetKit snapshot
 
-    /// Mirror of the struct in the widget extension (kept tiny and duplicated on purpose —
-    /// the Widget target is a standalone module and the schema is six fields).
+    /// Mirror of the widget extension's snapshot. Include battery state and
+    /// signed watts so an AC-powered discharge is never labelled "Charging".
     private struct WidgetSnapshot: Codable {
-        var level: Int; var isPluggedIn: Bool; var health: Int
+        var level: Int; var isPluggedIn: Bool; var isCharging: Bool
+        var batteryWatts: Double?; var health: Int
         var temperature: Double; var limitEnabled: Bool; var limit: Int; var timestamp: Date
     }
     private var lastWidgetReload = Date.distantPast
@@ -1558,7 +1592,8 @@ class BatteryTracker: ObservableObject {
             forSecurityApplicationGroupIdentifier: Distribution.appGroupID) else { return }
         let cl = ChargeLimitManager.shared
         let snap = WidgetSnapshot(
-            level: currentBatteryLevel, isPluggedIn: isPluggedIn, health: batteryHealth,
+            level: currentBatteryLevel, isPluggedIn: isPluggedIn,
+            isCharging: isCharging, batteryWatts: batteryWatts, health: batteryHealth,
             temperature: batteryTemperature, limitEnabled: cl.isEnabled && cl.helperStatus == .ready,
             limit: cl.limit, timestamp: Date()
         )
@@ -1566,7 +1601,7 @@ class BatteryTracker: ObservableObject {
         if let data = try? JSONEncoder().encode(snap) {
             try? data.write(to: container.appendingPathComponent("widget-snapshot.json"), options: .atomic)
         }
-        let key = "\(snap.level)|\(snap.isPluggedIn)|\(snap.limitEnabled)|\(snap.limit)"
+        let key = "\(snap.level)|\(snap.isPluggedIn)|\(snap.isCharging)|\(powerFlowState)|\(snap.limitEnabled)|\(snap.limit)"
         if key != lastWidgetSnapshotKey || Date().timeIntervalSince(lastWidgetReload) > 300 {
             lastWidgetSnapshotKey = key
             lastWidgetReload = Date()
@@ -1915,13 +1950,13 @@ extension BatteryTracker {
         }
 
         if showMenuBarPower {
-            if isPluggedIn {
-                if let dyn = dynamicWatts {
-                    parts.append(MenuBarLabel.watts(dyn, compact: menuBarCompact))
-                } else if let watts = powerAdapterWatts {
-                    parts.append("\(watts)W")
-                }
-            } else if let session = currentSession {
+            if let watts = batteryWatts {
+                // Visible minus sign prevents a discharge from masquerading
+                // as positive charging power even when plugged into AC.
+                parts.append(MenuBarLabel.batteryWatts(watts, compact: menuBarCompact))
+            } else if isPluggedIn, let input = dynamicWatts {
+                parts.append("AC " + MenuBarLabel.watts(input, compact: menuBarCompact))
+            } else if !isPluggedIn, let session = currentSession {
                 let delta = appState == "active" ? Date().timeIntervalSince(lastStateChange) : 0
                 parts.append(MenuBarLabel.duration(
                     seconds: session.screenOnDuration + delta, compact: menuBarCompact
@@ -2365,6 +2400,10 @@ enum MenuBarLabel {
     /// in a space this tight.
     static func watts(_ value: Double, compact: Bool) -> String {
         compact ? String(format: "%.0fW", value) : String(format: "%.1fW", value)
+    }
+
+    static func batteryWatts(_ value: Double, compact: Bool) -> String {
+        compact ? String(format: "%+.0fW", value) : String(format: "%+.1fW", value)
     }
 
     /// Compact halves the gap; two spaces are what make the default label read as separate

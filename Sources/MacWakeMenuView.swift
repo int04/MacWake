@@ -503,13 +503,19 @@ struct MacWakeMenuView: View {
                 title: "SCENE_PART_SSD", value: degrees(tracker.ssdTemperature),
                 detail: String(localized: "SCENE_SSD_DETAIL"))
         case .port:
-            let watts = tracker.dynamicWatts.map { String(format: "%.1f W", $0) } ?? tracker.powerAdapterWatts.map { "\($0) W" }
+            let details = [
+                tracker.batteryPowerDescription,
+                tracker.adapterRatedPowerDescription,
+                tracker.magSafeCableFirmware.map {
+                    String(format: String(localized: "SCENE_CABLE_FW_FMT"), $0)
+                }
+            ].compactMap { $0 }
             return PartReading(
                 symbol: "powerplug.fill", tint: tracker.isPluggedIn ? (tracker.isCharging ? .orange : .green) : .gray,
                 title: "SCENE_PART_PORT",
-                value: tracker.isPluggedIn ? (watts ?? String(localized: "Charging")) : String(localized: "SCENE_PORT_UNPLUGGED"),
-                detail: tracker.magSafeCableFirmware.map { String(format: String(localized: "SCENE_CABLE_FW_FMT"), $0) }
-                    ?? (tracker.isPluggedIn ? statusText : String(localized: "SCENE_PORT_DETAIL")))
+                value: tracker.adapterPowerDescription,
+                detail: details.isEmpty ? String(localized: "SCENE_PORT_DETAIL")
+                    : details.joined(separator: " · "))
         case .display:
             let profile = MacChassisProfile.current
             return PartReading(
@@ -1148,7 +1154,7 @@ struct MacWakeMenuView: View {
     /// discharge to Target, then recharge to Max, with an immediate Stop.
     @ViewBuilder
     private var dischargeSection: some View {
-        if chargeLimit.helperStatus == .ready, chargeLimit.isEnabled {
+        if chargeLimit.helperStatus == .ready {
             sectionLabel("TWO_MODE_SPECIAL_TITLE", icon: "battery.25percent")
             settingsCard {
                 HStack(spacing: 10) {
@@ -1163,6 +1169,16 @@ struct MacWakeMenuView: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 9)
 
+                if !chargeLimit.canHoldOnAdapterPower {
+                    rowDivider()
+                    Label("TWO_MODE_SPECIAL_BLOCKED",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                }
                 rowDivider()
                 if chargeLimit.twoModePhase != .normal {
                     HStack(spacing: 10) {
@@ -1225,7 +1241,8 @@ struct MacWakeMenuView: View {
                         } else {
                             Button("TWO_MODE_START") { dischargeConfirming = true }
                                 .buttonStyle(.borderedProminent).tint(.orange).controlSize(.small)
-                                .disabled(chargeLimit.holdCutsAdapter == nil ||
+                                .disabled(!chargeLimit.isEnabled ||
+                                          !chargeLimit.canHoldOnAdapterPower ||
                                           !(tracker.isPluggedIn || chargeLimit.isHoldingChargeOff))
                         }
                     }
@@ -1376,11 +1393,41 @@ struct MacWakeMenuView: View {
                     Spacer()
                     Toggle("", isOn: $chargeLimit.isEnabled)
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        .disabled(!chargeLimit.canHoldOnAdapterPower)
                 }
                 .padding(.horizontal, 12).padding(.vertical, 10)
-                if chargeLimit.isEnabled {
+                if chargeLimit.holdCutsAdapter == true && !chargeLimit.canHoldOnAdapterPower {
                     rowDivider()
-                    sliderBlock {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(chargeLimit.nativePowerUIAvailable
+                              ? "TWO_MODE_POWERUI_LOW_UNSUPPORTED"
+                              : "TWO_MODE_UNSUPPORTED_STRICT",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("TWO_MODE_NATIVE_GUIDANCE")
+                            .font(.system(size: 10)).foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("TWO_MODE_OPEN_BATTERY_SETTINGS") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.Battery-Settings.extension") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        .buttonStyle(.bordered).controlSize(.small)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                }
+                if chargeLimit.isUsingNativePowerUI && chargeLimit.isEnabled {
+                    rowDivider()
+                    Label("TWO_MODE_POWERUI_BACKEND", systemImage: "powerplug.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 12).padding(.vertical, 9)
+                }
+                rowDivider()
+                sliderBlock {
                         HStack {
                             Text("TWO_MODE_MAX").font(.caption).foregroundColor(.secondary)
                             Spacer()
@@ -1399,7 +1446,13 @@ struct MacWakeMenuView: View {
                             }
                         }
                         .padding(.top, 3)
+                        if !chargeLimit.isEnabled {
+                            Text("TWO_MODE_MAX_SAVED_NOT_ACTIVE")
+                                .font(.system(size: 10)).foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
+                if chargeLimit.isEnabled {
                     rowDivider()
                     sliderBlock {
                         if chargeLimit.holdCutsAdapter == nil {
@@ -1420,22 +1473,16 @@ struct MacWakeMenuView: View {
                                 Label("TWO_MODE_DRAINING", systemImage: "battery.50")
                                     .font(.system(size: 11)).foregroundColor(.orange)
                             case .charge:
-                                Label(chargeLimit.holdCutsAdapter == true &&
-                                      tracker.currentBatteryLevel >= chargeLimit.limit
-                                      ? "TWO_MODE_AC_RESTORED" : "TWO_MODE_CHARGING",
-                                      systemImage: "bolt.fill")
+                                Label("TWO_MODE_CHARGING", systemImage: "bolt.fill")
                                     .font(.system(size: 11)).foregroundColor(.green)
+                            case .unavailable:
+                                Label("TWO_MODE_UNSUPPORTED_STRICT",
+                                      systemImage: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 11)).foregroundColor(.orange)
                             case nil:
                                 Label("TWO_MODE_SWITCHING", systemImage: "arrow.triangle.2.circlepath")
                                     .font(.system(size: 11)).foregroundColor(.secondary)
                             }
-                        }
-                        if chargeLimit.holdCutsAdapter == true {
-                            Label(String(format: String(localized: "TWO_MODE_ADAPTER_FALLBACK"),
-                                         chargeLimit.limit, min(100, chargeLimit.limit + 5)),
-                                  systemImage: "exclamationmark.triangle.fill")
-                                .font(.system(size: 10)).foregroundColor(.orange)
-                                .fixedSize(horizontal: false, vertical: true)
                         }
                         if let error = chargeLimit.twoModeError {
                             Text(error)
@@ -1569,7 +1616,7 @@ struct MacWakeMenuView: View {
                 DepthBattery(
                     level: tracker.currentBatteryLevel,
                     tint: tracker.isPluggedIn ? .blue : (tracker.currentBatteryLevel < 20 ? .red : .green),
-                    charging: tracker.isPluggedIn
+                    charging: tracker.isCharging
                 )
                 Text("\(tracker.currentBatteryLevel)%")
                     .font(.system(.subheadline, design: .rounded))
@@ -1635,27 +1682,23 @@ struct MacWakeMenuView: View {
     }
 
     private var statusText: String {
-        if tracker.isPluggedIn {
-            let limitStr = limitStatusFragment
-            var portStr = ""
-            if let port = tracker.usbPortInfo {
-                portStr = String(format: String(localized: "VIA_FMT"), port)
-            }
-            let result: String
-            if let dyn = tracker.dynamicWatts, let maxWatts = tracker.powerAdapterWatts {
-                result = String(format: String(localized: "CHARGING_DYN_FMT"), dyn, maxWatts, portStr, limitStr)
-            } else if let watts = tracker.powerAdapterWatts {
-                result = String(format: String(localized: "CHARGING_FIXED_FMT"), watts, portStr, limitStr)
-            } else {
-                result = String(format: String(localized: "CHARGING_PORT_FMT"), portStr, limitStr)
-            }
-            // limitStr can be empty when no limit is in effect; the format strings still
-            // carry their literal separating space, so trim rather than touch five locales
-            // of CJK-sensitive spacing to make that space conditional.
-            return result.trimmingCharacters(in: .whitespaces)
+        // External AC and battery charging are separate facts: PowerUI can
+        // drain battery while the adapter remains connected. Never use an
+        // absolute battery-current sample as "charging" or "adapter watts".
+        var parts = [tracker.powerFlowStatus]
+        if let battery = tracker.batteryPowerDescription {
+            parts.append(battery)
         }
-
-        return String(localized: "On Battery")
+        if tracker.isPluggedIn {
+            parts.append(tracker.adapterPowerDescription)
+            if let rated = tracker.adapterRatedPowerDescription { parts.append(rated) }
+            if let port = tracker.usbPortInfo {
+                parts.append(String(format: String(localized: "VIA_FMT"), port))
+            }
+            let limitStr = limitStatusFragment
+            if !limitStr.isEmpty { parts.append(limitStr) }
+        }
+        return parts.joined(separator: " · ")
     }
     
     // MARK: - Current Session Components
@@ -1771,11 +1814,11 @@ struct MacWakeMenuView: View {
     }
 
     private var pluggedInDescription: String {
-        if let watts = tracker.powerAdapterWatts {
-            return String(format: String(localized: "CHARGING_DESC_FMT"), watts)
+        if tracker.isPluggedIn {
+            return [tracker.powerFlowStatus, tracker.adapterPowerDescription,
+                    tracker.batteryPowerDescription, tracker.adapterRatedPowerDescription]
+                .compactMap { $0 }.joined(separator: " · ")
         }
-        // Same conflated-source bug as statusText: this used to print the raw macOS-native
-        // reading regardless of whether MacWake's own limit was the one actually active.
         switch chargeLimitSource {
         case .macWake(let value):
             return String(format: String(localized: "UNPLUG_DESC_LIMIT_FMT"), value)

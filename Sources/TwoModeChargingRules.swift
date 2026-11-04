@@ -13,6 +13,7 @@ enum TwoModeChargingRules {
         case charge       // adapter connected, charging enabled
         case discharge    // adapter cut temporarily to consume battery
         case holdOnAC     // charge inhibit, adapter still powers the Mac
+        case unavailable  // backend cannot meet the no-battery-drain contract
     }
 
     struct Decision: Equatable {
@@ -20,37 +21,13 @@ enum TwoModeChargingRules {
         var action: Action
     }
 
-    /// CHIE-only hardware cannot inhibit charging while keeping the adapter online.
-    /// Instead it can discharge down to Max, reconnect AC, and defer the next cut
-    /// until a five-point band is crossed. This is NOT a battery bypass.
-    static func decideAdapterCutFallback(
-        phase: Phase,
-        batteryLevel: Int,
-        maxLimit: Int,
-        cycleTarget: Int,
-        adapterRestoredAtMax: Bool
-    ) -> Decision {
-        let ceiling = min(95, max(20, maxLimit))
-        switch phase {
-        case .normal:
-            if batteryLevel <= ceiling {
-                return Decision(phase: .normal, action: .charge)
-            }
-            if adapterRestoredAtMax && batteryLevel < min(100, ceiling + 5) {
-                return Decision(phase: .normal, action: .charge)
-            }
-            return Decision(phase: .normal, action: .discharge)
-        case .cycleDischarging:
-            if batteryLevel <= target(cycleTarget, maxLimit: ceiling) {
-                return Decision(phase: .cycleRecharging, action: .charge)
-            }
-            return Decision(phase: .cycleDischarging, action: .discharge)
-        case .cycleRecharging:
-            if batteryLevel >= ceiling {
-                return Decision(phase: .normal, action: .charge)
-            }
-            return Decision(phase: .cycleRecharging, action: .charge)
-        }
+    /// The same symbolic .discharge has different hardware semantics:
+    /// normal PowerUI limit keeps AC on; a special cycle explicitly cuts CHIE.
+    static func needsAdapterCut(
+        action: Action, phase: Phase, nativePowerUI: Bool
+    ) -> Bool {
+        guard action == .discharge else { return false }
+        return !nativePowerUI || phase == .cycleDischarging
     }
 
     static func target(_ proposed: Int, maxLimit: Int) -> Int {
@@ -61,8 +38,14 @@ enum TwoModeChargingRules {
         phase: Phase,
         batteryLevel: Int,
         maxLimit: Int,
-        cycleTarget: Int
+        cycleTarget: Int,
+        supportsChargeInhibit: Bool = true
     ) -> Decision {
+        // No charge-inhibit key means no exact hold on AC. Never switch the
+        // adapter off to imitate a hold: that simply drains the battery.
+        guard supportsChargeInhibit else {
+            return Decision(phase: .normal, action: .unavailable)
+        }
         let maxLimit = min(95, max(20, maxLimit))
         switch phase {
         case .normal:

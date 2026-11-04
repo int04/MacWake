@@ -26,41 +26,57 @@ final class TwoModeChargingRulesTests: XCTestCase {
         XCTAssertEqual(finished.action, .holdOnAC)
     }
 
-    func testAdapterCutOnlyDischargesFrom99To90ThenRestoresAC() {
-        let above = TwoModeChargingRules.decideAdapterCutFallback(
-            phase: .normal, batteryLevel: 99, maxLimit: 90,
-            cycleTarget: 20, adapterRestoredAtMax: false)
-        XCTAssertEqual(above.action, .discharge)
-
-        let reached = TwoModeChargingRules.decideAdapterCutFallback(
-            phase: .normal, batteryLevel: 90, maxLimit: 90,
-            cycleTarget: 20, adapterRestoredAtMax: true)
-        XCTAssertEqual(reached.action, .charge)
-
-        let band = TwoModeChargingRules.decideAdapterCutFallback(
-            phase: .normal, batteryLevel: 93, maxLimit: 90,
-            cycleTarget: 20, adapterRestoredAtMax: true)
-        XCTAssertEqual(band.action, .charge)
-
-        let upper = TwoModeChargingRules.decideAdapterCutFallback(
-            phase: .normal, batteryLevel: 95, maxLimit: 90,
-            cycleTarget: 20, adapterRestoredAtMax: false)
-        XCTAssertEqual(upper.action, .discharge)
+    func testUnsupportedBackendNeverCutsAdapterOrPretendsToHoldAC() {
+        for level in [5, 20, 49, 50, 51, 85, 90, 99, 100] {
+            for phase: TwoModeChargingRules.Phase in
+                [.normal, .cycleDischarging, .cycleRecharging] {
+                let decision = TwoModeChargingRules.decide(
+                    phase: phase, batteryLevel: level, maxLimit: 50,
+                    cycleTarget: 20, supportsChargeInhibit: false
+                )
+                XCTAssertEqual(decision, .init(phase: .normal, action: .unavailable),
+                               "unsupported backend must not force discharge at \(level)%")
+            }
+        }
     }
 
-    func testAdapterCutOnlySpecialCycleReturnsToACAfterMax() {
-        let draining = TwoModeChargingRules.decideAdapterCutFallback(
-            phase: .cycleDischarging, batteryLevel: 30, maxLimit: 90,
-            cycleTarget: 20, adapterRestoredAtMax: false)
-        XCTAssertEqual(draining.action, .discharge)
-        let atTarget = TwoModeChargingRules.decideAdapterCutFallback(
-            phase: .cycleDischarging, batteryLevel: 20, maxLimit: 90,
-            cycleTarget: 20, adapterRestoredAtMax: false)
-        XCTAssertEqual(atTarget, .init(phase: .cycleRecharging, action: .charge))
-        let atMax = TwoModeChargingRules.decideAdapterCutFallback(
-            phase: .cycleRecharging, batteryLevel: 90, maxLimit: 90,
-            cycleTarget: 20, adapterRestoredAtMax: true)
-        XCTAssertEqual(atMax, .init(phase: .normal, action: .charge))
+    func testSupportedBackendStopsAtExactMaxOnAC() {
+        XCTAssertEqual(
+            TwoModeChargingRules.decide(
+                phase: .normal, batteryLevel: 51, maxLimit: 50,
+                cycleTarget: 20, supportsChargeInhibit: true
+            ).action, .discharge
+        )
+        XCTAssertEqual(
+            TwoModeChargingRules.decide(
+                phase: .normal, batteryLevel: 50, maxLimit: 50,
+                cycleTarget: 20, supportsChargeInhibit: true
+            ).action, .holdOnAC
+        )
+        XCTAssertEqual(
+            TwoModeChargingRules.decide(
+                phase: .normal, batteryLevel: 49, maxLimit: 50,
+                cycleTarget: 20, supportsChargeInhibit: true
+            ).action, .charge
+        )
+    }
+
+    func testNativeNormalAndSpecialDischargeHaveDifferentPhysicalActions() {
+        XCTAssertFalse(TwoModeChargingRules.needsAdapterCut(
+            action: .discharge, phase: .normal, nativePowerUI: true
+        ), "Native MCL preserves AC while firmware drains toward Max")
+        XCTAssertTrue(TwoModeChargingRules.needsAdapterCut(
+            action: .discharge, phase: .cycleDischarging, nativePowerUI: true
+        ), "Special cycle must actively cut CHIE to reach Target")
+        XCTAssertTrue(TwoModeChargingRules.needsAdapterCut(
+            action: .discharge, phase: .normal, nativePowerUI: false
+        ), "Legacy SMC discharge still cuts adapter")
+        XCTAssertFalse(TwoModeChargingRules.needsAdapterCut(
+            action: .holdOnAC, phase: .normal, nativePowerUI: true
+        ))
+        XCTAssertFalse(TwoModeChargingRules.needsAdapterCut(
+            action: .charge, phase: .cycleRecharging, nativePowerUI: true
+        ))
     }
 
     func testCancelReturnsToNormalDecision() {

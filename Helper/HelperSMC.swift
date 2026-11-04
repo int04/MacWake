@@ -1,5 +1,6 @@
 import Foundation
 import IOKit
+import MacWakeShared
 
 // SMC param layout — must match the kernel's AppleSMC struct.
 private struct SMCVersion { var major: UInt8 = 0; var minor: UInt8 = 0; var build: UInt8 = 0; var reserved: UInt8 = 0; var release: UInt16 = 0 }
@@ -22,15 +23,16 @@ private struct SMCParamStruct {
         (0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0)
 }
 
-/// Root-only SMC charge control, covering the full M-series. The clean charge-inhibit
-/// keys (CHTE/CH0C) hold the battery on AC without discharging on M1/M2/M3; M4 lacks
-/// them, so we fall back to disabling the power adapter (CHIE/CH0J) — a discharge-to-hold
-/// approach. The chip-appropriate method is detected once at startup.
+/// Root-only SMC charge control. Charge-inhibit methods keep wall power connected,
+/// while CHIE/CH0J cut the adapter and are NEVER a safe substitute for AC bypass.
+/// CH0B comes from AlDente's legacy public source; it must pass a read-only
+/// schema/access/state probe in this privileged process before it is considered.
 enum HelperSMC {
     /// How this Mac's SMC stops charging.
     private enum Method {
-        /// Clean charge inhibit: 0 = allow charging, 1 = inhibit (stays on AC). CHTE/CH0C.
-        case inhibit(key: String)
+        /// Charge inhibit with per-key encoding: 0 = resume, "off" = inhibit.
+        /// CHTE/CH0C use 0x01; legacy AlDente CH0B uses 0x02.
+        case inhibit(key: String, off: UInt8)
         /// Adapter disable: 0 = adapter on, `off` = adapter off (forces discharge). CHIE/CH0J.
         case adapter(key: String, off: UInt8)
     }
@@ -53,12 +55,26 @@ enum HelperSMC {
     private static func detectMethod() -> Method? {
         guard let conn = open() else { return nil }
         defer { IOServiceClose(conn) }
-        // Prefer clean charge-inhibit keys (M1/M2/M3), then adapter keys (M4).
-        if available(conn, "CHTE") { return .inhibit(key: "CHTE") }
-        if available(conn, "CH0C") { return .inhibit(key: "CH0C") }
+        // Prefer the verified known inhibit keys. On some older Apple Silicon Macs
+        // CH0B is accessible to the root helper although unprivileged reads fail.
+        if available(conn, "CHTE") { return .inhibit(key: "CHTE", off: 0x01) }
+        if available(conn, "CH0C") { return .inhibit(key: "CH0C", off: 0x01) }
+        if verifiedLegacyCH0B(conn) { return .inhibit(key: "CH0B", off: 0x02) }
         if available(conn, "CHIE") { return .adapter(key: "CHIE", off: 0x08) }
         if available(conn, "CH0J") { return .adapter(key: "CH0J", off: 0x20) }
         return nil
+    }
+
+    /// A strictly read-only eligibility check; success does not alone prove that
+    /// the key actually stops charging. The app verifies macOS power/charging
+    /// separately after a requested hold and rolls back if that fails.
+    private static func verifiedLegacyCH0B(_ conn: io_connect_t) -> Bool {
+        guard let info = keyInfo(conn, ChargeInhibitKeyPolicy.legacyKey) else { return false }
+        let value = readChecked(conn, ChargeInhibitKeyPolicy.legacyKey)
+        return ChargeInhibitKeyPolicy.acceptsLegacyCH0B(
+            dataSize: info.dataSize, dataType: info.dataType,
+            attributes: info.dataAttributes, value: value
+        )
     }
 
     // MARK: - Public API (charging allowed = true means the battery may charge)
@@ -67,8 +83,17 @@ enum HelperSMC {
         guard let method = method, let conn = open() else { return false }
         defer { IOServiceClose(conn) }
         switch method {
-        case .inhibit(let key):
-            return write(conn, key, allowed ? 0x00 : 0x01)
+        case .inhibit(let key, let off):
+            if key == ChargeInhibitKeyPolicy.legacyKey {
+                // Never write CH0B unless this exact root connection can read a
+                // one-byte, writable ui8 key in a known state.
+                guard verifiedLegacyCH0B(conn) else { return false }
+            }
+            let target: UInt8 = allowed ? 0x00 : off
+            guard write(conn, key, target) else { return false }
+            // CH0B can be blocked by firmware despite exposing key metadata.
+            return key != ChargeInhibitKeyPolicy.legacyKey
+                || readChecked(conn, key) == target
         case .adapter(let key, let off):
             return write(conn, key, allowed ? 0x00 : off)
         }
@@ -79,11 +104,30 @@ enum HelperSMC {
         defer { IOServiceClose(conn) }
         let key: String
         switch method {
-        case .inhibit(let k): key = k
+        case .inhibit(let k, _): key = k
         case .adapter(let k, _): key = k
         }
-        // For both methods, 0 means "charging allowed / adapter on".
-        return read(conn, key) == 0
+        // A failed SMC read must not masquerade as "charging allowed".
+        return readChecked(conn, key) == 0
+    }
+
+    /// A validated read of the current method. Nil means the SMC denied the read,
+    /// the key is not in an expected state, or there is no method.
+    static func verifiedChargingAllowed() -> Bool? {
+        guard let method, let conn = open() else { return nil }
+        defer { IOServiceClose(conn) }
+        let key: String
+        let off: UInt8
+        switch method {
+        case .inhibit(let selected, let stop): key = selected; off = stop
+        case .adapter(let selected, let stop): key = selected; off = stop
+        }
+        guard let state = readChecked(conn, key) else { return nil }
+        switch state {
+        case 0: return true
+        case off: return false
+        default: return nil
+        }
     }
 
     /// Always uses the adapter key (CHIE/CH0J) so the battery actively discharges,
@@ -223,6 +267,27 @@ enum HelperSMC {
         return out
     }
 
+    /// Runs inside the privileged daemon and NEVER writes to the SMC.
+    /// Useful for determining whether CH0B is genuinely accessible to root
+    /// on a machine where an unprivileged probe failed.
+    static func chargeKeyDiagnostics() -> String {
+        guard let conn = open() else { return "SMC unavailable in privileged helper\n" }
+        defer { IOServiceClose(conn) }
+        var lines = ["method=\(chargeControlMethod())", "SMC key inspection (read only)"]
+        for key in ["CH0B", "CHTE", "CH0C", "CHIE", "CH0J", "BCLM", "bfF0", "bfD0", "bfE0"] {
+            guard let info = keyInfo(conn, key) else {
+                lines.append("\(key): not accessible (absent or denied)")
+                continue
+            }
+            let state = readChecked(conn, key).map(String.init) ?? "read denied"
+            let access = String(format: "0x%02X", info.dataAttributes)
+            lines.append("\(key): type=\(typeString(info.dataType)) size=\(info.dataSize) access=\(access) value=\(state)")
+        }
+        lines.append("legacy CH0B schema eligible=\(verifiedLegacyCH0B(conn))")
+        lines.append("IMPORTANT: metadata is not proof of battery bypass; AC and not-charging must both be observed.")
+        return lines.joined(separator: "\n") + "\n"
+    }
+
     /// Which mechanism this Mac's SMC offers for stopping charge, and which one we picked.
     ///
     /// The two differ in a way users feel: a charge-inhibit key holds the battery while the
@@ -232,7 +297,7 @@ enum HelperSMC {
     private static func chargeDiagnostics(_ conn: io_connect_t) -> String {
         var out = "--- charge control ---\n"
         out += "method=\(chargeControlMethod())\n"
-        for key in ["CHTE", "CH0C", "CHIE", "CH0J"] {
+        for key in ["CH0B", "CHTE", "CH0C", "CHIE", "CH0J"] {
             guard let info = keyInfo(conn, key) else {
                 out += "\(key) ABSENT\n"
                 continue
@@ -836,6 +901,25 @@ enum HelperSMC {
     private static func available(_ conn: io_connect_t, _ key: String) -> Bool {
         guard let info = keyInfo(conn, key) else { return false }
         return info.dataSize > 0
+    }
+
+    /// Error-preserving SMC read, for charge-control decisions and diagnostics.
+    /// The old read() returned zero on failure, indistinguishable from "enabled".
+    private static func readChecked(_ conn: io_connect_t, _ key: String) -> UInt8? {
+        guard let info = keyInfo(conn, key),
+              info.dataSize > 0 && info.dataSize <= 32 else { return nil }
+        var inp = SMCParamStruct()
+        inp.key = fourCC(key)
+        inp.keyInfo.dataSize = info.dataSize
+        inp.keyInfo.dataType = info.dataType
+        inp.data8 = 5
+        var out = SMCParamStruct()
+        var sz = MemoryLayout<SMCParamStruct>.stride
+        let result = IOConnectCallStructMethod(
+            conn, 2, &inp, MemoryLayout<SMCParamStruct>.stride, &out, &sz
+        )
+        guard result == kIOReturnSuccess && out.result == 0 else { return nil }
+        return out.bytes.0
     }
 
     private static func read(_ conn: io_connect_t, _ key: String) -> UInt8 {

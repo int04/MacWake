@@ -16,6 +16,9 @@ let kAppGroupID = "ZB8Y3RH44B.com.nghiaduc.macwakelocal"
 struct BatterySnapshot: Codable {
     var level: Int
     var isPluggedIn: Bool
+    /// Optional for backwards-compatible decoding of existing snapshots.
+    var isCharging: Bool?
+    var batteryWatts: Double?
     var health: Int
     var temperature: Double
     var limitEnabled: Bool
@@ -23,7 +26,8 @@ struct BatterySnapshot: Codable {
     var timestamp: Date
 
     static let placeholder = BatterySnapshot(
-        level: 82, isPluggedIn: true, health: 96, temperature: 31.5,
+        level: 82, isPluggedIn: true, isCharging: false, batteryWatts: -8.2,
+        health: 96, temperature: 31.5,
         limitEnabled: true, limit: 80, timestamp: Date()
     )
 
@@ -74,6 +78,18 @@ struct BatteryWidgetView: View {
         return l <= 20 ? .red : (l <= 40 ? .orange : .green)
     }
 
+    private var batteryState: String {
+        if entry.snapshot.isCharging == true {
+            return String(localized: "POWER_FLOW_CHARGING")
+        }
+        if let watts = entry.snapshot.batteryWatts, watts < -0.5 {
+            return String(localized: "POWER_FLOW_DISCHARGING")
+        }
+        return entry.snapshot.isPluggedIn
+            ? String(localized: "POWER_FLOW_NOT_CHARGING")
+            : String(localized: "On Battery")
+    }
+
     var body: some View {
         content
             .containerBackground(.background, for: .widget)
@@ -107,11 +123,15 @@ struct BatteryWidgetView: View {
     private var small: some View {
         VStack(spacing: 6) {
             ring.frame(width: 74, height: 74)
-            Text(entry.stale
-                 ? String(localized: "Open MacWake")
-                 : (entry.snapshot.isPluggedIn ? String(localized: "Charging") : String(localized: "On Battery")))
+            Text(entry.stale ? String(localized: "Open MacWake") : batteryState)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(.secondary)
+            if !entry.stale, let watts = entry.snapshot.batteryWatts {
+                Text(String(format: String(localized: "POWER_FLOW_BATTERY_WATTS_FMT"), watts))
+                    .font(.system(size: 9).monospacedDigit())
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
         }
     }
 
@@ -127,6 +147,12 @@ struct BatteryWidgetView: View {
                         text: entry.snapshot.limitEnabled
                             ? String(format: String(localized: "Limit %d%%"), entry.snapshot.limit)
                             : String(localized: "No charge limit"))
+                if !entry.stale {
+                    statRow(icon: "battery.100percent", tint: .blue,
+                            text: entry.snapshot.batteryWatts.map {
+                                String(format: String(localized: "POWER_FLOW_BATTERY_WATTS_FMT"), $0)
+                            } ?? batteryState)
+                }
                 if entry.stale {
                     statRow(icon: "exclamationmark.circle", tint: .secondary,
                             text: String(localized: "Open MacWake to refresh"))

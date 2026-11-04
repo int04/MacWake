@@ -508,3 +508,11 @@
 "FINISH_YELLOW" = "옐로";
 "FINISH_ORANGE" = "오렌지";
 "FINISH_PURPLE" = "퍼플";
+
+"POWER_FLOW_CHARGING" = "배터리 충전 중";
+"POWER_FLOW_DISCHARGING" = "배터리 방전 중";
+"POWER_FLOW_NOT_CHARGING" = "배터리 충전 안 함";
+"POWER_FLOW_AC_CONNECTED" = "AC 전원 연결됨";
+"POWER_FLOW_AC_INPUT_FMT" = "AC 입력: %.1f W";
+"POWER_FLOW_ADAPTER_RATED_FMT" = "어댑터 정격: %d W";
+"POWER_FLOW_BATTERY_WATTS_FMT" = "배터리: %+.1f W";

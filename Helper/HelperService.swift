@@ -15,6 +15,14 @@ final class HelperService: NSObject, MacWakeHelperProtocol {
         reply(HelperSMC.getAdapterEnabled())
     }
 
+    func getChargeInhibitReadback(reply: @escaping (Bool, Bool) -> Void) {
+        if let allowed = HelperSMC.verifiedChargingAllowed() {
+            reply(true, allowed)
+        } else {
+            reply(false, true)
+        }
+    }
+
     func setForceDischarge(_ discharging: Bool, reply: @escaping (Bool) -> Void) {
         reply(HelperSMC.setForceDischarge(discharging))
     }
@@ -46,6 +54,10 @@ final class HelperService: NSObject, MacWakeHelperProtocol {
 
     func chargeControlMethod(reply: @escaping (String) -> Void) {
         reply(HelperSMC.chargeControlMethod())
+    }
+
+    func chargeKeyDiagnostics(reply: @escaping (String) -> Void) {
+        reply("helper v\(kMacWakeHelperVersion)\n" + HelperSMC.chargeKeyDiagnostics())
     }
 
     func firmwareLimitSupported(reply: @escaping (Bool) -> Void) {

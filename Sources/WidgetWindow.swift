@@ -60,26 +60,24 @@ struct WidgetView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if tracker.isPluggedIn {
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("CHARGING")
+                            Text(tracker.powerFlowStatus)
                                 .font(.system(.caption2))
                                 .fontWeight(.bold)
                                 .foregroundColor(.secondary)
-                            
-                            if let dyn = tracker.dynamicWatts {
-                                Text(String(format: "%.1f W", dyn))
+
+                            if let battery = tracker.batteryPowerDescription {
+                                Text(battery)
                                     .font(.system(.title3))
                                     .fontWeight(.bold)
                                     .foregroundColor(Theme.darkBlue)
-                            } else if let nominal = tracker.powerAdapterWatts {
-                                Text("\(nominal) W")
-                                    .font(.system(.title3))
-                                    .fontWeight(.bold)
-                                    .foregroundColor(Theme.darkBlue)
-                            } else {
-                                Text("Plugged")
-                                    .font(.system(.title3))
-                                    .fontWeight(.bold)
-                                    .foregroundColor(Theme.darkBlue)
+                            }
+                            Text(tracker.adapterPowerDescription)
+                                .font(.system(.caption2))
+                                .foregroundColor(.secondary)
+                            if let rated = tracker.adapterRatedPowerDescription {
+                                Text(rated)
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.secondary)
                             }
                         }
                     } else {

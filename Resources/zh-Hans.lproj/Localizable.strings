@@ -508,3 +508,11 @@
 "FINISH_YELLOW" = "黄色";
 "FINISH_ORANGE" = "橙色";
 "FINISH_PURPLE" = "紫色";
+
+"POWER_FLOW_CHARGING" = "电池正在充电";
+"POWER_FLOW_DISCHARGING" = "电池正在放电";
+"POWER_FLOW_NOT_CHARGING" = "电池未充电";
+"POWER_FLOW_AC_CONNECTED" = "已连接交流电源";
+"POWER_FLOW_AC_INPUT_FMT" = "交流输入：%.1f W";
+"POWER_FLOW_ADAPTER_RATED_FMT" = "适配器额定功率：%d W";
+"POWER_FLOW_BATTERY_WATTS_FMT" = "电池：%+.1f W";

@@ -302,15 +302,19 @@ struct DynamicIslandPanelView: View {
         if isHoldingAtLimit {
             return String(format: String(localized: "ISLAND_HOLDING_FMT"), chargeLimit.limit)
         }
-        return tracker.isPluggedIn ? String(localized: "Charging") : String(localized: "On Battery")
+        return tracker.powerFlowStatus
     }
 
     @ViewBuilder
     private var powerReadout: some View {
-        if tracker.isPluggedIn, let dyn = tracker.dynamicWatts {
-            wattBadge(String(format: "%.1f W", dyn))
-        } else if tracker.isPluggedIn, let w = tracker.powerAdapterWatts {
-            wattBadge("\(w) W")
+        if let battery = tracker.batteryPowerDescription {
+            wattBadge(battery)
+        }
+        if tracker.isPluggedIn {
+            Text(tracker.adapterPowerDescription)
+                .font(.system(size: 9))
+                .foregroundColor(.white.opacity(0.55))
+                .lineLimit(1).minimumScaleFactor(0.8)
         }
 
         // While MacWake holds the adapter off, the battery is draining by design — a

@@ -223,8 +223,6 @@
 "TWO_MODE_TIMEOUT" = "Special cycle timed out and returned to the normal charge limit.";
 "TWO_MODE_COMMAND_FAILED" = "SMC charge-control command failed. Power restoration was attempted.";
 
-"TWO_MODE_ADAPTER_FALLBACK" = "This Mac uses adapter cut (CHIE), not true AC bypass: discharge to %d%%, reconnect AC, then allow up to %d%% before cutting again. Battery may recharge during this interval.";
-"TWO_MODE_AC_RESTORED" = "AC power restored. Battery may continue charging.";
 
 "MACINFO_HEADING" = "Mac System Information";
 "MACINFO_SUBTITLE" = "Detailed system information, grouped by category. Open a group to load it, or load all available reports.";
@@ -256,3 +254,20 @@
 "MACINFO_PRINTERS" = "Printers & optical drives";
 "MACINFO_ACCESSIBILITY" = "Accessibility";
 "MACINFO_DIAGNOSTICS" = "Diagnostics & logs";
+
+"TWO_MODE_UNSUPPORTED_STRICT" = "Exact charge hold is unavailable on this Mac. The SMC only supports cutting adapter power (CHIE), which drains the battery. MacWake has turned its charge limit OFF and restored adapter power. Your Max and Target settings are saved, but cannot be enforced on this firmware.";
+"TWO_MODE_NATIVE_GUIDANCE" = "macOS offers its own battery Charge Limit from 80% to 100%. It can stop charging while AC remains connected, but it cannot hold a custom 50% and may occasionally recalibrate to 100%. Configure it in System Settings.";
+"TWO_MODE_OPEN_BATTERY_SETTINGS" = "Open macOS Battery Settings";
+"TWO_MODE_SPECIAL_BLOCKED" = "Special cycle is unavailable: it cannot finish with the battery held at Max on AC without a working charge-inhibit method.";
+"TWO_MODE_HOLD_VERIFY_FAILED" = "Unable to verify that charging stopped while AC remained connected. MacWake restored adapter power and disabled charge limiting for safety.";
+"TWO_MODE_MAX_SAVED_NOT_ACTIVE" = "Max is saved but not enforced while Charge Limit is off or unsupported.";
+"TWO_MODE_POWERUI_BACKEND" = "Using macOS PowerUI charge limit (80–95%). Adapter power stays connected; macOS may vary the limit or calibrate the battery.";
+"TWO_MODE_POWERUI_LOW_UNSUPPORTED" = "PowerUI on this Mac supports only 80–95% in MacWake. A lower Max is saved but cannot be enforced here; choose 80% or higher to enable native charging control.";
+
+"POWER_FLOW_CHARGING" = "Battery charging";
+"POWER_FLOW_DISCHARGING" = "Battery discharging";
+"POWER_FLOW_NOT_CHARGING" = "Battery not charging";
+"POWER_FLOW_AC_CONNECTED" = "AC power connected";
+"POWER_FLOW_AC_INPUT_FMT" = "AC input: %.1f W";
+"POWER_FLOW_ADAPTER_RATED_FMT" = "Adapter rating: %d W";
+"POWER_FLOW_BATTERY_WATTS_FMT" = "Battery: %+.1f W";

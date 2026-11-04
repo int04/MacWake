@@ -498,3 +498,11 @@
 "FINISH_YELLOW" = "Sarı";
 "FINISH_ORANGE" = "Turuncu";
 "FINISH_PURPLE" = "Mor";
+
+"POWER_FLOW_CHARGING" = "Pil şarj oluyor";
+"POWER_FLOW_DISCHARGING" = "Pil deşarj oluyor";
+"POWER_FLOW_NOT_CHARGING" = "Pil şarj olmuyor";
+"POWER_FLOW_AC_CONNECTED" = "AC gücü bağlı";
+"POWER_FLOW_AC_INPUT_FMT" = "AC girişi: %.1f W";
+"POWER_FLOW_ADAPTER_RATED_FMT" = "Adaptör kapasitesi: %d W";
+"POWER_FLOW_BATTERY_WATTS_FMT" = "Pil: %+.1f W";

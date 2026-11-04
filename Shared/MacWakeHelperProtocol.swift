@@ -27,6 +27,10 @@ public let kMacWakeCodeSigningRequirement =
     /// Reads the current charging-allowed state. Returns true if charging is allowed.
     func getAdapterEnabled(reply: @escaping (Bool) -> Void)
 
+    /// Verified readback: (known, allowed). Unknown/denied SMC reads MUST NOT
+    /// be mistaken for proof that charging has stopped.
+    func getChargeInhibitReadback(reply: @escaping (Bool, Bool) -> Void)
+
     /// Force the power adapter off/on via CHIE/CH0J on every chip, so the battery
     /// actively discharges. Used by Sailing Mode to drift the battery down to the lower
     /// bound even on Macs whose default method is a non-discharging charge inhibit.
@@ -68,6 +72,10 @@ public let kMacWakeCodeSigningRequirement =
     /// detected from key availability, not from the chip model.
     func chargeControlMethod(reply: @escaping (String) -> Void)
 
+    /// Metadata and current values for known charging keys, read only from root.
+    /// Never sends an SMC write or probes experimental keys with a write.
+    func chargeKeyDiagnostics(reply: @escaping (String) -> Void)
+
     /// Whether this Mac exposes the firmware-managed charge limit: `bfF0`, `bfD0` and `bfE0` all
     /// present, non-empty and readable. Read-only — nothing is written to answer it. Absent on
     /// most Macs, and gated behind a privilege the SMC user client withholds on newer macOS
@@ -104,4 +112,4 @@ public let kMacWakeCodeSigningRequirement =
 /// without bumping means users keep executing the previous code. That silently
 /// swallowed two Apple Silicon fan fixes (1.43, 1.45) before it was caught; build.sh
 /// now warns when Helper/ changes without a bump.
-public let kMacWakeHelperVersion = "15"
+public let kMacWakeHelperVersion = "16"

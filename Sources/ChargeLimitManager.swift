@@ -87,13 +87,11 @@ enum ChargeHoldRules {
     }
 }
 
-/// Manages the privileged helper daemon and drives charge limiting by toggling
-/// the power adapter (SMC key CHIE) through the helper.
-///
-/// Apple Silicon (M-series) has no clean "inhibit charge but stay on AC" SMC key
-/// that is writable on M4, so we hold the battery near the limit by cutting the
-/// adapter (discharge) above the target and re-enabling it once it dips below —
-/// the same discharge-to-hold strategy AlDente uses where no inhibit key exists.
+/// Manages charging with one of two verified backends:
+/// - Native PowerUI MCL on newer macOS (80–95%): firmware controls charging
+///   with the adapter connected; explicit special cycles may still cut CHIE.
+/// - A validated SMC charge-inhibit key on older compatible hardware.
+/// Never simulate an AC hold by repeatedly cutting the adapter with CHIE.
 @MainActor
 final class ChargeLimitManager: ObservableObject {
     static let shared = ChargeLimitManager()
@@ -113,6 +111,14 @@ final class ChargeLimitManager: ObservableObject {
 
     @Published var isEnabled: Bool {
         didSet {
+            // Never allow "Charge Limit ON" on a backend incapable of holding
+            // adapter power while inhibiting battery charging. The fallback
+            // used to cycle CHIE every five percentage points.
+            if isEnabled, !canHoldOnAdapterPower {
+                isEnabled = false
+                twoModeError = String(localized: "TWO_MODE_UNSUPPORTED_STRICT")
+                return
+            }
             UserDefaults.standard.set(isEnabled, forKey: "chargeLimitEnabled")
             if !isEnabled {
                 twoModePhase = .normal
@@ -129,6 +135,11 @@ final class ChargeLimitManager: ObservableObject {
             // "assume enforcing" read instead of carrying old state across the gap.
             ownership = .enforcing
             consecutiveClearHoldSamples = 0
+            if isEnabled, helperStatus == .ready {
+                let sample = BatteryTracker.sharedForIntents?.chargeControlSample()
+                evaluate(batteryLevel: sample?.level ?? twoModeLastBatteryLevel,
+                         isPluggedIn: sample?.plugged ?? twoModeLastPlugged)
+            }
         }
     }
 
@@ -139,9 +150,13 @@ final class ChargeLimitManager: ObservableObject {
             UserDefaults.standard.set(limit, forKey: "chargeLimitValue")
             if sailingLower > limit - 5 { sailingLower = limit - 5 }
             if dischargeTarget >= limit { dischargeTarget = max(5, limit - 5) }
-            adapterRestoredAtMax = false
             if isEnabled, helperStatus == .ready {
-                evaluate(batteryLevel: twoModeLastBatteryLevel, isPluggedIn: twoModeLastPlugged)
+                if !canHoldOnAdapterPower {
+                    isEnabled = false
+                    twoModeError = String(localized: "TWO_MODE_UNSUPPORTED_STRICT")
+                } else {
+                    evaluate(batteryLevel: twoModeLastBatteryLevel, isPluggedIn: twoModeLastPlugged)
+                }
             }
         }
     }
@@ -151,14 +166,24 @@ final class ChargeLimitManager: ObservableObject {
     @Published private(set) var twoModePhase: TwoModeChargingRules.Phase = .normal
     @Published private(set) var twoModeAppliedAction: TwoModeChargingRules.Action?
     @Published private(set) var twoModeError: String?
-    var canHoldOnAdapterPower: Bool { holdCutsAdapter == false }
+    /// Native macOS PowerUI MCL can cap charging while retaining AC at 80–95%.
+    /// It is separate from the SMC charge-inhibit capability, which this Mac lacks.
+    @Published private(set) var nativePowerUIAvailable = false
+    private var nativePowerUIOriginal: NativePowerUIChargeLimit.Status?
+    private var nativePowerUIAppliedLimit: Int?
+    private let nativePowerUIOriginalKey = "macWakePowerUIOriginalState"
+    private var usesNativePowerUI: Bool {
+        holdCutsAdapter == true && nativePowerUIAvailable &&
+            NativePowerUIChargeLimit.supports(limit)
+    }
+    var canHoldOnAdapterPower: Bool { holdCutsAdapter == false || usesNativePowerUI }
+    var isUsingNativePowerUI: Bool { usesNativePowerUI }
     private var twoModeCycleTarget = 20
-    /// Adapter-cut-only Macs restore AC at Max and do not recut until Max + 5%.
-    /// This is a bounded charge/discharge fallback, not a true charge inhibit.
-    private var adapterRestoredAtMax = false
     var activeCycleTarget: Int { twoModeCycleTarget }
     private var twoModeStartedAt: Date?
     private var twoModeRequestedAction: TwoModeChargingRules.Action?
+    private var twoModeExecutingAction: TwoModeChargingRules.Action?
+    private var holdPowerAnomalyCount = 0
     private var twoModeCommandInFlight = false
     private var twoModeGeneration = 0
     private var twoModeSuspended = false
@@ -955,6 +980,14 @@ final class ChargeLimitManager: ObservableObject {
     /// Synchronous best-effort restore for app termination — clears charge blocks and
     /// returns fans to automatic before the process exits.
     func restoreChargingOnQuit() {
+        // PowerUI limits persist independently of this application. Restore the
+        // exact native setting that existed before MacWake took ownership.
+        if let previous = nativePowerUIOriginal,
+           NativePowerUIChargeLimit.restoreSynchronously(previous) {
+            UserDefaults.standard.removeObject(forKey: nativePowerUIOriginalKey)
+            nativePowerUIOriginal = nil
+            nativePowerUIAppliedLimit = nil
+        }
         guard let proxy = remoteProxy() else { return }
         let needsCharge = (lastAdapterEnabled == false)
         let needsFan = fanControlEnabled
@@ -993,9 +1026,12 @@ final class ChargeLimitManager: ObservableObject {
             return
         }
 
-        // CHIE makes macOS report Battery Power even when a cable is inserted.
-        // The successful SMC write is the only evidence that *we* induced that.
-        let plugged = isPluggedIn || lastAdapterEnabled == false
+        // CHIE makes macOS report Battery Power when a discharge was
+        // explicitly requested. A charge-inhibit key must NOT hide a real
+        // physical unplug: on inhibit, macOS should still report AC Power.
+        let macWakeCutAdapter = lastAdapterEnabled == false &&
+            (twoModeAppliedAction == .discharge || twoModeExecutingAction == .discharge)
+        let plugged = isPluggedIn || macWakeCutAdapter
         guard plugged else {
             twoModePhase = .normal
             twoModeStartedAt = nil
@@ -1003,18 +1039,39 @@ final class ChargeLimitManager: ObservableObject {
             return
         }
 
-        // A clean charge-inhibit key can hold the battery exactly at Max on AC.
-        // CHIE-only hardware can still drain down to Max, then reconnect AC, but
-        // needs a five-point band to avoid flapping; it cannot bypass the battery.
-        guard let cutsAdapter = holdCutsAdapter else { return }
-        if cutsAdapter {
-            if batteryLevel <= limit ||
-                (twoModePhase == .cycleRecharging && batteryLevel >= limit) {
-                adapterRestoredAtMax = true
+        // Exact AC hold requires an independent charge-inhibit key. CHIE
+        // physically disconnects wall power and cannot implement that contract.
+        // On unknown helper capabilities, restore AC until detection completes.
+        guard let cutsAdapter = holdCutsAdapter else {
+            requestTwoModeAction(.charge)
+            return
+        }
+        guard !cutsAdapter || usesNativePowerUI else {
+            twoModePhase = .normal
+            twoModeStartedAt = nil
+            if isEnabled { isEnabled = false }
+            twoModeError = String(localized: "TWO_MODE_UNSUPPORTED_STRICT")
+            requestTwoModeAction(.unavailable)
+            return
+        }
+
+        if twoModeAppliedAction == .holdOnAC && twoModePhase == .normal {
+            // Firmware/OS updates can undo an inhibit after the first successful
+            // write. Require repeated evidence before disabling the mode.
+            let sample = BatteryTracker.sharedForIntents?.chargeControlSample()
+            if sample?.plugged == true && sample?.charging == false {
+                holdPowerAnomalyCount = 0
+            } else {
+                holdPowerAnomalyCount += 1
+                if holdPowerAnomalyCount >= 3 {
+                    if isEnabled { isEnabled = false }
+                    twoModeError = String(localized: "TWO_MODE_HOLD_VERIFY_FAILED")
+                    requestTwoModeAction(.charge)
+                    return
+                }
             }
-            if twoModePhase == .normal && batteryLevel >= min(100, limit + 5) {
-                adapterRestoredAtMax = false
-            }
+        } else {
+            holdPowerAnomalyCount = 0
         }
 
         if let started = twoModeStartedAt, twoModePhase != .normal,
@@ -1024,22 +1081,19 @@ final class ChargeLimitManager: ObservableObject {
             twoModeError = String(localized: "TWO_MODE_TIMEOUT")
         }
 
-        let decision = cutsAdapter
-            ? TwoModeChargingRules.decideAdapterCutFallback(
-                phase: twoModePhase, batteryLevel: batteryLevel, maxLimit: limit,
-                cycleTarget: twoModeCycleTarget, adapterRestoredAtMax: adapterRestoredAtMax
-              )
-            : TwoModeChargingRules.decide(
-                phase: twoModePhase, batteryLevel: batteryLevel, maxLimit: limit,
-                cycleTarget: twoModeCycleTarget
-              )
+        let decision = TwoModeChargingRules.decide(
+            phase: twoModePhase, batteryLevel: batteryLevel, maxLimit: limit,
+            cycleTarget: twoModeCycleTarget, supportsChargeInhibit: true
+        )
         if decision.phase != twoModePhase {
             twoModePhase = decision.phase
             if decision.phase == .normal { twoModeStartedAt = nil }
         }
 
         var action = decision.action
-        if action == .discharge {
+        if TwoModeChargingRules.needsAdapterCut(
+            action: action, phase: twoModePhase, nativePowerUI: usesNativePowerUI
+        ) {
             let sensor = BatteryTracker.sharedForIntents
             let sampleFresh = sensor?.lastBatteryTemperatureSampleAt.map {
                 Date().timeIntervalSince($0) >= 0 && Date().timeIntervalSince($0) < 120
@@ -1056,9 +1110,9 @@ final class ChargeLimitManager: ObservableObject {
                 if twoModePhase != .normal {
                     twoModePhase = .normal
                     twoModeStartedAt = nil
-                    action = batteryLevel >= limit && !cutsAdapter ? .holdOnAC : .charge
+                    action = batteryLevel >= limit ? .holdOnAC : .charge
                 } else {
-                    action = cutsAdapter ? .charge : .holdOnAC
+                    action = .holdOnAC
                 }
                 twoModeError = String(localized: "TWO_MODE_DISCHARGE_PAUSED")
             } else {
@@ -1072,11 +1126,16 @@ final class ChargeLimitManager: ObservableObject {
     }
 
     func startSpecialCycle(batteryLevel: Int, isPluggedIn: Bool) {
-        guard isEnabled, helperStatus == .ready, holdCutsAdapter != nil,
+        guard isEnabled, helperStatus == .ready, canHoldOnAdapterPower,
               twoModePhase == .normal, (isPluggedIn || lastAdapterEnabled == false) else { return }
         twoModeCycleTarget = TwoModeChargingRules.target(dischargeTarget, maxLimit: limit)
         twoModeStartedAt = Date()
         twoModeError = nil
+        // Native normal discharge keeps AC connected, but the special cycle
+        // must actively cut CHIE to reach Target. Reapply even if the symbolic
+        // Action remains .discharge across the phase transition.
+        twoModeGeneration += 1
+        twoModeAppliedAction = nil
         twoModePhase = batteryLevel <= twoModeCycleTarget ? .cycleRecharging : .cycleDischarging
         evaluate(batteryLevel: batteryLevel, isPluggedIn: isPluggedIn)
     }
@@ -1088,6 +1147,9 @@ final class ChargeLimitManager: ObservableObject {
         // In-flight writes are serialized; a late discharge reply is unwound before
         // the normal mode is allowed to take ownership again.
         twoModeGeneration += 1
+        // Stop must restore the adapter even if both the special cycle and
+        // native normal mode report .discharge (different physical actions).
+        twoModeAppliedAction = nil
         twoModeError = nil
         evaluate(batteryLevel: twoModeLastBatteryLevel, isPluggedIn: twoModeLastPlugged)
     }
@@ -1115,7 +1177,9 @@ final class ChargeLimitManager: ObservableObject {
     }
 
     private func requestTwoModeAction(_ action: TwoModeChargingRules.Action) {
-        if twoModeAppliedAction == action, !twoModeCommandInFlight { return }
+        if twoModeAppliedAction == action, !twoModeCommandInFlight,
+           !(nativePowerUIOriginal != nil &&
+             (!isEnabled || nativePowerUIAppliedLimit != limit)) { return }
         twoModeRequestedAction = action
         guard !twoModeCommandInFlight else { return }
         twoModeCommandInFlight = true
@@ -1127,9 +1191,13 @@ final class ChargeLimitManager: ObservableObject {
     private func runTwoModeCommands() async {
         while let action = twoModeRequestedAction {
             twoModeRequestedAction = nil
-            if action == twoModeAppliedAction { continue }
+            if action == twoModeAppliedAction,
+               !(nativePowerUIOriginal != nil &&
+                 (!isEnabled || nativePowerUIAppliedLimit != limit)) { continue }
             let generation = twoModeGeneration
+            twoModeExecutingAction = action
             let ok = await applyTwoModeAction(action)
+            twoModeExecutingAction = nil
             if generation != twoModeGeneration {
                 _ = await restoreCharging()
                 twoModeAppliedAction = nil
@@ -1142,19 +1210,110 @@ final class ChargeLimitManager: ObservableObject {
                 }
             } else {
                 twoModeAppliedAction = nil
-                twoModeError = String(localized: "TWO_MODE_COMMAND_FAILED")
                 _ = await restoreCharging()
+                if action == .holdOnAC || usesNativePowerUI {
+                    // Readback did not prove charge inhibition *and* AC power.
+                    // Do not retry every heartbeat or drain the battery.
+                    if isEnabled { isEnabled = false }
+                    twoModeError = String(localized: "TWO_MODE_HOLD_VERIFY_FAILED")
+                } else {
+                    twoModeError = String(localized: "TWO_MODE_COMMAND_FAILED")
+                }
             }
         }
         twoModeCommandInFlight = false
         updateTwoModeMonitor()
     }
 
+    private func savedNativePowerUIOriginal() -> NativePowerUIChargeLimit.Status? {
+        guard let saved = UserDefaults.standard.dictionary(forKey: nativePowerUIOriginalKey),
+              let enabled = saved["enabled"] as? Bool,
+              let savedLimit = saved["limit"] as? Int,
+              (0...100).contains(savedLimit) else { return nil }
+        return NativePowerUIChargeLimit.Status(
+            supported: true, enabled: enabled, limit: savedLimit
+        )
+    }
+
+    /// Remember the user's pre-existing native macOS charge limit before
+    /// assuming ownership. All subsequent action changes use the same snapshot.
+    private func ensureNativePowerUILimit() async -> Bool {
+        guard usesNativePowerUI else { return false }
+        if nativePowerUIOriginal == nil {
+            // Recover the pre-MacWake setting even after a crash. Native MCL
+            // lives in powerd and can outlive an unexpected app termination.
+            if let saved = savedNativePowerUIOriginal() {
+                nativePowerUIOriginal = saved
+            } else {
+                guard let original = await NativePowerUIChargeLimit.readStatus(),
+                      original.supported,
+                      !original.enabled || NativePowerUIChargeLimit.supports(original.limit) else {
+                    return false
+                }
+                nativePowerUIOriginal = original
+                UserDefaults.standard.set(
+                    ["enabled": original.enabled, "limit": original.limit],
+                    forKey: nativePowerUIOriginalKey
+                )
+            }
+        }
+        if nativePowerUIAppliedLimit == limit {
+            // Avoid an unnecessary PowerUI process on every heartbeat/phase.
+            return true
+        }
+        let success = await NativePowerUIChargeLimit.setLimit(limit)
+        if success { nativePowerUIAppliedLimit = limit }
+        return success
+    }
+
+    private func restoreOwnedNativePowerUI() async -> Bool {
+        guard let original = nativePowerUIOriginal else { return true }
+        guard await NativePowerUIChargeLimit.restore(original) else { return false }
+        nativePowerUIOriginal = nil
+        nativePowerUIAppliedLimit = nil
+        UserDefaults.standard.removeObject(forKey: nativePowerUIOriginalKey)
+        return true
+    }
+
     private func applyTwoModeAction(_ action: TwoModeChargingRules.Action) async -> Bool {
         // Clear both CHIE discharge and CHTE inhibit before switching modes.
         guard await restoreCharging() else { return false }
+
+        // macOS native MCL is a real firmware-held limit that keeps the
+        // adapter online. Unlike CHIE, it does not fake a hold by discharging.
+        if nativePowerUIOriginal != nil && (!isEnabled || !usesNativePowerUI) {
+            return await restoreOwnedNativePowerUI()
+        }
+        if usesNativePowerUI {
+            guard await ensureNativePowerUILimit() else { return false }
+            switch action {
+            case .charge, .unavailable:
+                return true
+            case .discharge:
+                if TwoModeChargingRules.needsAdapterCut(
+                    action: action, phase: twoModePhase, nativePowerUI: true
+                ) {
+                    // The explicit special cycle may need to reach <80%.
+                    return await forceDischarge(true)
+                }
+                // The firmware-managed MCL requests discharge toward Max
+                // itself (powerd chargeSocLimitDrain=1). Never cut CHIE for the
+                // standing limit: AC must remain connected throughout.
+                return true
+            case .holdOnAC:
+                guard let tracker = BatteryTracker.sharedForIntents else { return false }
+                for _ in 0..<15 {
+                    let sample = tracker.chargeControlSample()
+                    guard sample.plugged else { return false }
+                    if !sample.charging { return true }
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                }
+                return false
+            }
+        }
+
         switch action {
-        case .charge:
+        case .charge, .unavailable:
             return true
         case .discharge:
             return await forceDischarge(true)
@@ -1168,6 +1327,25 @@ final class ChargeLimitManager: ObservableObject {
             // A missing helper reply is not evidence that charge inhibition succeeded.
             guard let chargingAllowed = await readChargingAllowed(proxy),
                   !chargingAllowed else { return false }
+            // A writable-looking SMC key is not sufficient proof of AC bypass.
+            // If macOS actually switched to Battery Power, fail closed and the
+            // caller restores the adapter instead of claiming "holding on AC".
+            // A successful SMC write and readback alone do not establish that
+            // the Mac is bypassing its battery. Wait for macOS to stop reporting
+            // "Charging" while the AC source remains physically connected.
+            // The first sample often lags a few seconds behind the SMC write.
+            guard let tracker = BatteryTracker.sharedForIntents else { return false }
+            var observedHolding = false
+            for _ in 0..<15 {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                let sample = tracker.chargeControlSample()
+                guard sample.plugged else { return false }
+                if !sample.charging {
+                    observedHolding = true
+                    break
+                }
+            }
+            guard observedHolding else { return false }
             lastAdapterEnabled = false
             lastToggleAt = Date()
             return true
@@ -1185,7 +1363,9 @@ final class ChargeLimitManager: ObservableObject {
                 completed = true
                 cont.resume(returning: value)
             }
-            proxy.getAdapterEnabled { finish($0) }
+            proxy.getChargeInhibitReadback { known, allowed in
+                finish(known ? allowed : nil)
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { finish(nil) }
         }
     }
@@ -1577,9 +1757,42 @@ final class ChargeLimitManager: ObservableObject {
         proxy.chargeControlMethod { [weak self] method in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                // "none" leaves this nil: there is no hold to describe.
-                if method.hasPrefix("adapter:") { self.holdCutsAdapter = true }
-                else if method.hasPrefix("inhibit:") { self.holdCutsAdapter = false }
+                if method.hasPrefix("inhibit:") {
+                    self.nativePowerUIAvailable = false
+                    self.holdCutsAdapter = false
+                } else {
+                    // Before declaring this Mac unsupported, check its native
+                    // firmware-managed MCL. AlDente 1.39.4 uses PowerUI as an
+                    // independent backend on macOS 27.
+                    let status = await NativePowerUIChargeLimit.readStatus()
+                    self.nativePowerUIAvailable = status?.supported == true
+                    self.holdCutsAdapter = true
+                    if !self.isEnabled && self.nativePowerUIAvailable,
+                       let previouslyOwned = self.savedNativePowerUIOriginal() {
+                        // After a crash while PowerUI was owned, the UI can
+                        // restart OFF even though powerd still holds the limit.
+                        // Restore only an explicitly recorded MacWake-owned MCL.
+                        self.nativePowerUIOriginal = previouslyOwned
+                        self.twoModeAppliedAction = nil
+                        self.requestTwoModeAction(.charge)
+                    }
+                }
+                if self.canHoldOnAdapterPower {
+                    if self.twoModeError == String(localized: "TWO_MODE_UNSUPPORTED_STRICT") {
+                        self.twoModeError = nil
+                    }
+                    if self.isEnabled {
+                        self.evaluate(batteryLevel: self.twoModeLastBatteryLevel,
+                                      isPluggedIn: self.twoModeLastPlugged)
+                    }
+                } else {
+                    self.twoModeGeneration += 1
+                    self.twoModePhase = .normal
+                    self.twoModeStartedAt = nil
+                    if self.isEnabled { self.isEnabled = false }
+                    self.twoModeError = String(localized: "TWO_MODE_UNSUPPORTED_STRICT")
+                    self.requestTwoModeAction(.unavailable)
+                }
             }
         }
     }
@@ -1823,6 +2036,7 @@ final class ChargeLimitManager: ObservableObject {
             catch { log += "register FAILED: \(error.localizedDescription)\n" }
             log += "final status: \(service.status.rawValue)"
             helperVersion = nil
+            holdCutsAdapter = nil   // force a fresh probe after the helper update
             refreshStatus()
             return log
         }
@@ -1891,6 +2105,7 @@ final class ChargeLimitManager: ObservableObject {
 
         log += "final status: \(service.status.rawValue)"
         helperVersion = nil
+        holdCutsAdapter = nil   // helper v16 may discover a new charge-inhibit key
         refreshStatus()
         forgetFirmwareLimit()
         fanCount = 0

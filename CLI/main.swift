@@ -56,6 +56,7 @@ private func usage() {
     USAGE
       macwake status                 battery %, power source, charging state
       macwake method                 show SMC charge-stop method (read-only)
+      macwake charge-keys            inspect charge SMC keys via root helper (read-only)
       macwake charging on|off        allow or stop charging
       macwake adapter on|off         power adapter on, or off to discharge on AC
       macwake energy auto|low|high   set the macOS Energy Mode
@@ -101,6 +102,16 @@ case "method":
     p.chargeControlMethod { value in method = value; sem.signal() }
     _ = sem.wait(timeout: .now() + 3)
     print(method)
+
+case "charge-keys":
+    guard let p = helper() else { exit(1) }
+    let sem = DispatchSemaphore(value: 0)
+    var result = "helper did not answer (is it v16?)"
+    p.chargeKeyDiagnostics { value in result = value; sem.signal() }
+    guard sem.wait(timeout: .now() + 5) == .success else {
+        fail("root helper did not answer charge key diagnostics")
+    }
+    print(result, terminator: result.hasSuffix("\n") ? "" : "\n")
 
 case "charging" where args.count == 2 && (args[1] == "on" || args[1] == "off"):
     guard let p = helper() else { exit(1) }
